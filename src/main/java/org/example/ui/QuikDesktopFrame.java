@@ -132,9 +132,8 @@ public final class QuikDesktopFrame extends JFrame {
         registerAction("Ping", () -> runRpc("ping", "", new PingScript(rpcRef.get()).run()));
         registerAction("Сделки по UID (все из таблицы «Сделки»)", () -> {
             long uid = Long.parseLong(uidField.getText().trim());
-            String req = "uid|" + uid;
             QuikMessage resp = new GetTradesByUidScript(rpcRef.get()).run(uid);
-            return runRpc("get_trades_filtered", req, resp);
+            return runRpc("get_trades_by_uid", "uid=" + uid, resp);
         });
         for (JButton b : remoteActionButtons) {
             actions.add(b);
@@ -148,7 +147,7 @@ public final class QuikDesktopFrame extends JFrame {
         params.add(new JLabel("UID (число, по умолчанию " + GetTradesByUidScript.DEFAULT_UID + "):"));
         params.add(uidField);
         params.add(Box.createVerticalStrut(8));
-        JLabel hint = new JLabel("<html><body style='width:280px'>Нужна команда <b>get_trades_filtered</b> в <code>qsfunctions.lua</code> на стороне QUIK. После обновления Lua перезапустите скрипт в терминале.</body></html>");
+        JLabel hint = new JLabel("<html><body style='width:320px'>Используется штатная команда QUIK# <b>get_trades</b> (все сделки), фильтр по UID выполняется в Java. Поля UID: on_behalf_of_uid, userid, user_id, uid, client_uid, user.</body></html>");
         hint.setFont(hint.getFont().deriveFont(11f));
         params.add(hint);
 

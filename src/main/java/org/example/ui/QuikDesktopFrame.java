@@ -5,11 +5,9 @@ import org.example.quik.dto.QuikMessage;
 import org.example.quik.json.QuikJson;
 import org.example.quik.rpc.QuikRpcClient;
 import org.example.quik.session.QuikSharpSession;
-import org.example.scripts.GetTradesFilteredScript;
-import org.example.scripts.IsConnectedScript;
+import org.example.scripts.GetTradesByUidScript;
 import org.example.scripts.LogCallbackScript;
 import org.example.scripts.PingScript;
-import org.example.scripts.SendTransactionScript;
 import org.example.storage.H2QuikRepository;
 
 import javax.swing.BorderFactory;
@@ -37,13 +35,13 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.ConnectException;
 import java.sql.SQLException;
-import java.util.concurrent.ExecutionException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Swing UI: подключение к QUIK#, отдельные кнопки под каждый сценарий, вывод JSON и запись в локальный H2.
+ * Минимальный UI: только Ping и выборка всех сделок по UID (по умолчанию 115).
  */
 public final class QuikDesktopFrame extends JFrame {
 
@@ -54,12 +52,8 @@ public final class QuikDesktopFrame extends JFrame {
     private final JTextField responsePortField = new JTextField("34130", 6);
     private final JTextField callbackPortField = new JTextField("34131", 6);
 
-    private final JTextArea transactionArea = new JTextArea(4, 40);
-    private final JTextField uidField = new JTextField(12);
-    private final JTextField orderNumField = new JTextField(12);
-    private final JTextField classField = new JTextField("TQBR", 8);
-    private final JTextField secField = new JTextField("SBER", 8);
-    private final JTextField rawFilterField = new JTextField("uid|0", 24);
+    /** UID для фильтра сделок (см. {@link GetTradesByUidScript#DEFAULT_UID}). */
+    private final JTextField uidField = new JTextField(String.valueOf(GetTradesByUidScript.DEFAULT_UID), 8);
 
     private final JTextArea resultArea = new JTextArea();
     private final JTextArea callbackArea = new JTextArea();
@@ -92,7 +86,7 @@ public final class QuikDesktopFrame extends JFrame {
         disconnectBtn.setEnabled(false);
         setRemoteButtonsEnabled(false);
 
-        setPreferredSize(new Dimension(980, 720));
+        setPreferredSize(new Dimension(880, 620));
         pack();
         setLocationRelativeTo(null);
     }
@@ -132,55 +126,31 @@ public final class QuikDesktopFrame extends JFrame {
     }
 
     private JPanel buildCenterPanel() {
-        JPanel left = new JPanel();
-        left.setLayout(new BoxLayout(left, BoxLayout.Y_AXIS));
-        left.setBorder(BorderFactory.createTitledBorder("Вызовы"));
+        JPanel actions = new JPanel();
+        actions.setLayout(new BoxLayout(actions, BoxLayout.Y_AXIS));
+        actions.setBorder(BorderFactory.createTitledBorder("Действия"));
         registerAction("Ping", () -> runRpc("ping", "", new PingScript(rpcRef.get()).run()));
-        registerAction("isConnected", () -> runRpc("isConnected", "", new IsConnectedScript(rpcRef.get()).run()));
-        registerAction("sendTransaction", () -> {
-            String body = transactionArea.getText().trim();
-            return runRpc("sendTransaction", body, new SendTransactionScript(rpcRef.get()).run(body));
-        });
-        registerAction("Сделки по UID", () -> {
+        registerAction("Сделки по UID (все из таблицы «Сделки»)", () -> {
             long uid = Long.parseLong(uidField.getText().trim());
-            return runRpc("get_trades_filtered", "uid|" + uid, new GetTradesFilteredScript(rpcRef.get()).runByUid(uid));
-        });
-        registerAction("Сделки по фильтру (строка)", () -> {
-            String f = rawFilterField.getText().trim();
-            return runRpc("get_trades_filtered", f, new GetTradesFilteredScript(rpcRef.get()).run(f));
-        });
-        registerAction("Сделки по номеру заявки", () -> {
-            long n = Long.parseLong(orderNumField.getText().trim());
-            return runRpc("get_trades_filtered", "order_num|" + n, new GetTradesFilteredScript(rpcRef.get()).runByOrderNum(n));
-        });
-        registerAction("Сделки class|sec", () -> {
-            String cc = classField.getText().trim();
-            String sc = secField.getText().trim();
-            String req = "class_sec|" + cc + "|" + sc;
-            return runRpc("get_trades_filtered", req, new GetTradesFilteredScript(rpcRef.get()).runByClassAndSec(cc, sc));
+            String req = "uid|" + uid;
+            QuikMessage resp = new GetTradesByUidScript(rpcRef.get()).run(uid);
+            return runRpc("get_trades_filtered", req, resp);
         });
         for (JButton b : remoteActionButtons) {
-            left.add(b);
-            left.add(Box.createVerticalStrut(4));
+            actions.add(b);
+            actions.add(Box.createVerticalStrut(6));
         }
-        left.add(Box.createVerticalGlue());
+        actions.add(Box.createVerticalGlue());
 
         JPanel params = new JPanel();
         params.setLayout(new BoxLayout(params, BoxLayout.Y_AXIS));
-        params.setBorder(BorderFactory.createTitledBorder("Параметры"));
-        params.add(new JLabel("Транзакция (строка KEY=VALUE;...):"));
-        transactionArea.setLineWrap(true);
-        params.add(new JScrollPane(transactionArea));
-        params.add(Box.createVerticalStrut(6));
-        params.add(labeledRow("UID (сделки):", uidField));
-        params.add(Box.createVerticalStrut(4));
-        params.add(labeledRow("Номер заявки:", orderNumField));
-        params.add(Box.createVerticalStrut(4));
-        params.add(labeledRow("Класс:", classField));
-        params.add(labeledRow("Бумага:", secField));
-        params.add(Box.createVerticalStrut(4));
-        params.add(new JLabel("Сырой фильтр (uid|… / order_num|… / class_sec|…):"));
-        params.add(rawFilterField);
+        params.setBorder(BorderFactory.createTitledBorder("Параметр"));
+        params.add(new JLabel("UID (число, по умолчанию " + GetTradesByUidScript.DEFAULT_UID + "):"));
+        params.add(uidField);
+        params.add(Box.createVerticalStrut(8));
+        JLabel hint = new JLabel("<html><body style='width:280px'>Нужна команда <b>get_trades_filtered</b> в <code>qsfunctions.lua</code> на стороне QUIK. После обновления Lua перезапустите скрипт в терминале.</body></html>");
+        hint.setFont(hint.getFont().deriveFont(11f));
+        params.add(hint);
 
         resultArea.setEditable(false);
         resultArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
@@ -191,20 +161,13 @@ public final class QuikDesktopFrame extends JFrame {
         tabs.addTab("Колбеки", new JScrollPane(callbackArea));
 
         JSplitPane vertical = new JSplitPane(JSplitPane.VERTICAL_SPLIT, params, tabs);
-        vertical.setResizeWeight(0.32);
-        JSplitPane horizontal = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, vertical);
-        horizontal.setResizeWeight(0.24);
+        vertical.setResizeWeight(0.18);
+        JSplitPane horizontal = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, actions, vertical);
+        horizontal.setResizeWeight(0.28);
 
         JPanel wrap = new JPanel(new BorderLayout());
         wrap.add(horizontal, BorderLayout.CENTER);
         return wrap;
-    }
-
-    private static JPanel labeledRow(String title, JTextField field) {
-        JPanel row = new JPanel(new BorderLayout(6, 0));
-        row.add(new JLabel(title), BorderLayout.WEST);
-        row.add(field, BorderLayout.CENTER);
-        return row;
     }
 
     private void registerAction(String title, RpcRunnable action) {
@@ -228,8 +191,13 @@ public final class QuikDesktopFrame extends JFrame {
                     try {
                         QuikMessage msg = get();
                         String pretty = QuikJson.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(msg);
-                        resultArea.setText(pretty);
-                        resultArea.setCaretPosition(0);
+                        if ("lua_error".equals(msg.getCmd()) || msg.getLuaError() != null) {
+                            JOptionPane.showMessageDialog(QuikDesktopFrame.this,
+                                    "Ответ с ошибкой Lua:\n" + (msg.getLuaError() != null ? msg.getLuaError() : pretty),
+                                    "QUIK#",
+                                    JOptionPane.WARNING_MESSAGE);
+                        }
+                        appendResultSummary(msg, pretty);
                     } catch (ExecutionException ex) {
                         Throwable c = ex.getCause() != null ? ex.getCause() : ex;
                         resultArea.setText(stackTrace(c));
@@ -239,6 +207,15 @@ public final class QuikDesktopFrame extends JFrame {
                 }
             }.execute();
         });
+    }
+
+    private void appendResultSummary(QuikMessage msg, String prettyJson) {
+        StringBuilder head = new StringBuilder();
+        if (msg.getData() != null && msg.getData().isArray()) {
+            head.append("// Найдено сделок: ").append(msg.getData().size()).append("\n");
+        }
+        resultArea.setText(head + prettyJson);
+        resultArea.setCaretPosition(0);
     }
 
     private JPanel buildSouthPanel() {
@@ -293,7 +270,7 @@ public final class QuikDesktopFrame extends JFrame {
                     connectBtn.setEnabled(false);
                     disconnectBtn.setEnabled(true);
                     setRemoteButtonsEnabled(true);
-                    resultArea.setText("Подключено.\nОтветы RPC и колбеки сохраняются в H2 (~/.quikclient/quik.mv.db).");
+                    resultArea.setText("Подключено. Доступны: Ping и сделки по UID.\nОтветы и колбеки пишутся в H2.");
                 } catch (Exception e) {
                     sessionRef.set(null);
                     rpcRef.set(null);

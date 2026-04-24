@@ -12,6 +12,7 @@ import org.example.scripts.PingScript;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.ConnectException;
 
 /**
  * Сценарий запуска: подключение, RPC-проверки, приём колбеков. Без торговых поручений — только демонстрация канала.
@@ -20,7 +21,14 @@ public final class QuikClientApplication {
 
     public void run(String[] args) throws IOException {
         ConnectionSettings settings = parseArgs(args);
-        try (QuikSharpSession session = QuikSharpSession.open(settings);
+        final QuikSharpSession session;
+        try {
+            session = QuikSharpSession.open(settings);
+        } catch (ConnectException e) {
+            printConnectionRefusedHint(settings);
+            throw e;
+        }
+        try (session;
              LogCallbackScript callbacks = new LogCallbackScript(session, this::onCallback)) {
 
             callbacks.start();
@@ -48,6 +56,13 @@ public final class QuikClientApplication {
         } catch (Exception e) {
             System.out.println("[callback] cmd=" + msg.getCmd() + " err=" + e.getMessage());
         }
+    }
+
+    private static void printConnectionRefusedHint(ConnectionSettings s) {
+        System.err.println("Connection refused: на " + s.host() + ":" + s.responsePort()
+                + " (и далее callback " + s.callbackPort() + ") нет слушателя.");
+        System.err.println("Запустите в QUIK скрипт из папки lua (например Quik_2.lua или QuikSharp.lua), дождитесь сообщения о ожидании клиента.");
+        System.err.println("Порта должны совпадать с lua/config.json (для Quik_2 обычно 34132 и 34133). В IDEA задайте Program arguments: 127.0.0.1 34132 34133");
     }
 
     private static ConnectionSettings parseArgs(String[] args) {

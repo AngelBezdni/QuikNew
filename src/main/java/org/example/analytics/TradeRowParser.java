@@ -46,6 +46,45 @@ public final class TradeRowParser {
         return (flags(trade) & SELL_BIT) != 0;
     }
 
+    /** Цена сделки за единицу (поле price в QUIK). */
+    public static double unitPrice(JsonNode trade) {
+        Double p = nodeAsDouble(GetTradesByUidScript.getPropIgnoreCase(trade, "price"));
+        return p != null ? p : 0.0;
+    }
+
+    /**
+     * Денежный объём сделки в рублях: при наличии {@code value} берём его, иначе {@code qty * price}.
+     */
+    public static double amountRub(JsonNode trade) {
+        JsonNode val = getAny(trade, "value", "VALUE");
+        Double v = nodeAsDouble(val);
+        if (v != null && Math.abs(v) > 1e-9) {
+            return Math.abs(v);
+        }
+        return Math.abs(unitPrice(trade) * qtyLots(trade));
+    }
+
+    public static Double nodeAsDouble(JsonNode n) {
+        if (n == null || n.isNull()) {
+            return null;
+        }
+        if (n.isNumber()) {
+            return n.doubleValue();
+        }
+        if (n.isTextual()) {
+            String t = n.asText().trim().replace(',', '.');
+            if (t.isEmpty()) {
+                return null;
+            }
+            try {
+                return Double.parseDouble(t);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     private static String textPropIgnoreCase(JsonNode obj, String field) {
         JsonNode n = GetTradesByUidScript.getPropIgnoreCase(obj, field);
         if (n == null || n.isNull()) {

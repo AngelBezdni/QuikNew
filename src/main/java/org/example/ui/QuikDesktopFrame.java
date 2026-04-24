@@ -33,6 +33,7 @@ import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.util.Locale;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -63,7 +64,17 @@ public final class QuikDesktopFrame extends JFrame {
     private final JTextArea callbackArea = new JTextArea();
 
     private final DefaultTableModel summaryTableModel = new DefaultTableModel(
-            new Object[]{"Класс", "SEC (актив)", "Куплено, лот", "Продано, лот", "Нетто (куп − прод)"}, 0) {
+            new Object[]{
+                    "Класс",
+                    "SEC",
+                    "Куп, лот",
+                    "Прод, лот",
+                    "Остаток (куп−прод), лот",
+                    "Сумма покупок, ₽",
+                    "Сумма продаж, ₽",
+                    "Разница min×(прод−куп), ₽",
+                    "Остаток в ₽"
+            }, 0) {
         @Override
         public boolean isCellEditable(int row, int column) {
             return false;
@@ -99,7 +110,7 @@ public final class QuikDesktopFrame extends JFrame {
         disconnectBtn.setEnabled(false);
         setRemoteButtonsEnabled(false);
 
-        setPreferredSize(new Dimension(880, 620));
+        setPreferredSize(new Dimension(1180, 640));
         pack();
         setLocationRelativeTo(null);
     }
@@ -186,7 +197,9 @@ public final class QuikDesktopFrame extends JFrame {
     private JPanel buildSummaryTab() {
         JPanel panel = new JPanel(new BorderLayout(4, 4));
         panel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
-        JLabel info = new JLabel("Данные из таблицы quik_trade_leg по последнему сохранённому запросу «Сделки по UID».");
+        JLabel info = new JLabel("<html>Сводка по последнему сохранённому набору <code>quik_trade_leg</code>. "
+                + "«Разница» = min(куп,прод)×(средняя продажа − средняя покупка). «Остаток, ₽» = нетто-лоты × средняя цена "
+                + "(long — по покупке, short — по продаже).</html>");
         info.setFont(info.getFont().deriveFont(11f));
         JButton refresh = new JButton("Обновить из H2");
         refresh.addActionListener(e -> refreshSummaryFromH2());
@@ -210,7 +223,11 @@ public final class QuikDesktopFrame extends JFrame {
                         r.secCode(),
                         r.boughtLots(),
                         r.soldLots(),
-                        r.netLots()
+                        r.netLots(),
+                        formatMoney(r.sumBuyRub()),
+                        formatMoney(r.sumSellRub()),
+                        formatMoney(r.realizedPriceDiffRub()),
+                        formatMoney(r.remainderRub())
                 });
             }
         } catch (SQLException ex) {
@@ -380,6 +397,10 @@ public final class QuikDesktopFrame extends JFrame {
         StringWriter sw = new StringWriter();
         e.printStackTrace(new PrintWriter(sw));
         return sw.toString();
+    }
+
+    private static String formatMoney(double v) {
+        return String.format(Locale.ROOT, "%.2f", v);
     }
 
     @FunctionalInterface

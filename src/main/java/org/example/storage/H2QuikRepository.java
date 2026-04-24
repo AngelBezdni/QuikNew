@@ -75,6 +75,8 @@ public final class H2QuikRepository implements AutoCloseable {
                       side VARCHAR(8) NOT NULL,
                       flags BIGINT NOT NULL,
                       trade_num_text VARCHAR(128),
+                      unit_price DOUBLE,
+                      amount_rub DOUBLE,
                       created_at TIMESTAMP NOT NULL
                     )""");
             st.execute("CREATE INDEX IF NOT EXISTS idx_quik_rpc_created ON quik_rpc_result(created_at)");
@@ -82,6 +84,32 @@ public final class H2QuikRepository implements AutoCloseable {
             st.execute("CREATE INDEX IF NOT EXISTS idx_trade_leg_rpc ON quik_trade_leg(rpc_result_id)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_trade_leg_sec ON quik_trade_leg(sec_code)");
         }
+        migrateTradeLegMoneyColumns(c);
+    }
+
+    /** Таблица могла быть создана старыми версиями без цены и суммы. */
+    private static void migrateTradeLegMoneyColumns(Connection c) throws SQLException {
+        try (Statement st = c.createStatement()) {
+            try {
+                st.execute("ALTER TABLE quik_trade_leg ADD COLUMN unit_price DOUBLE");
+            } catch (SQLException e) {
+                if (!isDuplicateColumn(e)) {
+                    throw e;
+                }
+            }
+            try {
+                st.execute("ALTER TABLE quik_trade_leg ADD COLUMN amount_rub DOUBLE");
+            } catch (SQLException e) {
+                if (!isDuplicateColumn(e)) {
+                    throw e;
+                }
+            }
+        }
+    }
+
+    private static boolean isDuplicateColumn(SQLException e) {
+        String m = e.getMessage();
+        return m != null && (m.contains("Duplicate column") || m.contains("already exists"));
     }
 
     public synchronized void saveRpc(String operation, String requestPayload, QuikMessage response) throws IOException, SQLException {
@@ -116,8 +144,8 @@ public final class H2QuikRepository implements AutoCloseable {
     private void persistTradeLegs(long rpcResultId, JsonNode tradesArray) throws SQLException {
         Timestamp now = Timestamp.from(Instant.now());
         String sql = """
-                INSERT INTO quik_trade_leg(rpc_result_id, class_code, sec_code, qty_lots, side, flags, trade_num_text, created_at)
-                VALUES (?,?,?,?,?,?,?,?)""";
+                INSERT INTO quik_trade_leg(rpc_result_id, class_code, sec_code, qty_lots, side, flags, trade_num_text, unit_price, amount_rub, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int batches = 0;
             for (JsonNode tr : tradesArray) {
@@ -129,6 +157,8 @@ public final class H2QuikRepository implements AutoCloseable {
                     continue;
                 }
                 String side = TradeRowParser.isSell(tr) ? "SELL" : "BUY";
+                double price = TradeRowParser.unitPrice(tr);
+                double amount = TradeRowParser.amountRub(tr);
                 ps.setLong(1, rpcResultId);
                 ps.setString(2, TradeRowParser.classCode(tr));
                 ps.setString(3, TradeRowParser.secCode(tr));
@@ -136,7 +166,9 @@ public final class H2QuikRepository implements AutoCloseable {
                 ps.setString(5, side);
                 ps.setLong(6, TradeRowParser.flags(tr));
                 ps.setString(7, TradeRowParser.tradeNumText(tr));
-                ps.setTimestamp(8, now);
+                ps.setDouble(8, price);
+                ps.setDouble(9, amount);
+                ps.setTimestamp(10, now);
                 ps.addBatch();
                 batches++;
             }
@@ -164,7 +196,9 @@ public final class H2QuikRepository implements AutoCloseable {
         String sql = """
                 SELECT class_code, sec_code,
                        SUM(CASE WHEN side = 'BUY' THEN qty_lots ELSE 0 END) AS bought,
-                       SUM(CASE WHEN side = 'SELL' THEN qty_lots ELSE 0 END) AS sold
+                       SUM(CASE WHEN side = 'SELL' THEN qty_lots ELSE 0 END) AS sold,
+                       COALESCE(SUM(CASE WHEN side = 'BUY' THEN COALESCE(amount_rub, 0) ELSE 0 END), 0) AS sum_buy,
+                       COALESCE(SUM(CASE WHEN side = 'SELL' THEN COALESCE(amount_rub, 0) ELSE 0 END), 0) AS sum_sell
                   FROM quik_trade_leg
                  WHERE rpc_result_id = ?
                  GROUP BY class_code, sec_code
@@ -176,12 +210,32 @@ public final class H2QuikRepository implements AutoCloseable {
                 while (rs.next()) {
                     long bought = rs.getLong("bought");
                     long sold = rs.getLong("sold");
+                    double sumBuy = rs.getDouble("sum_buy");
+                    double sumSell = rs.getDouble("sum_sell");
+                    long net = bought - sold;
+                    double avgBuy = bought > 0 ? sumBuy / bought : 0.0;
+                    double avgSell = sold > 0 ? sumSell / sold : 0.0;
+                    long matched = Math.min(bought, sold);
+                    double realizedDiff = 0.0;
+                    if (bought > 0 && sold > 0) {
+                        realizedDiff = matched * (avgSell - avgBuy);
+                    }
+                    double remainderRub = 0.0;
+                    if (net > 0 && bought > 0) {
+                        remainderRub = net * avgBuy;
+                    } else if (net < 0 && sold > 0) {
+                        remainderRub = Math.abs((double) net) * avgSell;
+                    }
                     rows.add(new TradeSummaryRow(
                             rs.getString("class_code"),
                             rs.getString("sec_code"),
                             bought,
                             sold,
-                            bought - sold));
+                            net,
+                            sumBuy,
+                            sumSell,
+                            realizedDiff,
+                            remainderRub));
                 }
             }
         }

@@ -19,6 +19,15 @@ import java.time.Instant;
  */
 public final class H2QuikRepository implements AutoCloseable {
 
+    static {
+        try {
+            Class.forName("org.h2.Driver");
+        } catch (ClassNotFoundException e) {
+            throw new ExceptionInInitializerError(new IllegalStateException(
+                    "В classpath нет драйвера H2. Соберите fat-jar: mvn package, затем java -jar target/QuikClient-*-all.jar", e));
+        }
+    }
+
     private final String jdbcUrl;
     private Connection connection;
 

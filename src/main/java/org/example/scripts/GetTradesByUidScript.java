@@ -169,7 +169,7 @@ public final class GetTradesByUidScript {
         return false;
     }
 
-    static JsonNode getPropIgnoreCase(JsonNode obj, String field) {
+    public static JsonNode getPropIgnoreCase(JsonNode obj, String field) {
         if (obj == null || !obj.isObject()) {
             return null;
         }
@@ -186,7 +186,7 @@ public final class GetTradesByUidScript {
         return null;
     }
 
-    static Long nodeAsLong(JsonNode n) {
+    public static Long nodeAsLong(JsonNode n) {
         if (n == null || n.isNull()) {
             return null;
         }

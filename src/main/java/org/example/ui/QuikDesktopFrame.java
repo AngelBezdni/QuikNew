@@ -5,6 +5,7 @@ import org.example.quik.dto.QuikMessage;
 import org.example.quik.json.QuikJson;
 import org.example.quik.rpc.QuikRpcClient;
 import org.example.quik.session.QuikSharpSession;
+import org.example.analytics.TradeSummaryRow;
 import org.example.scripts.GetTradesByUidScript;
 import org.example.scripts.LogCallbackScript;
 import org.example.scripts.PingScript;
@@ -21,11 +22,13 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
+import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
+import javax.swing.table.DefaultTableModel;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -36,6 +39,7 @@ import java.io.StringWriter;
 import java.net.ConnectException;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -57,6 +61,15 @@ public final class QuikDesktopFrame extends JFrame {
 
     private final JTextArea resultArea = new JTextArea();
     private final JTextArea callbackArea = new JTextArea();
+
+    private final DefaultTableModel summaryTableModel = new DefaultTableModel(
+            new Object[]{"Класс", "SEC (актив)", "Куплено, лот", "Продано, лот", "Нетто (куп − прод)"}, 0) {
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return false;
+        }
+    };
+    private final JTable summaryTable = new JTable(summaryTableModel);
 
     private final JButton connectBtn = new JButton("Подключиться");
     private final JButton disconnectBtn = new JButton("Отключиться");
@@ -129,12 +142,12 @@ public final class QuikDesktopFrame extends JFrame {
         JPanel actions = new JPanel();
         actions.setLayout(new BoxLayout(actions, BoxLayout.Y_AXIS));
         actions.setBorder(BorderFactory.createTitledBorder("Действия"));
-        registerAction("Ping", () -> runRpc("ping", "", new PingScript(rpcRef.get()).run()));
+        registerAction("Ping", () -> runRpc("ping", "", new PingScript(rpcRef.get()).run()), false);
         registerAction("Сделки по UID (все из таблицы «Сделки»)", () -> {
             long uid = Long.parseLong(uidField.getText().trim());
             QuikMessage resp = new GetTradesByUidScript(rpcRef.get()).run(uid);
             return runRpc("get_trades_by_uid", "uid=" + uid, resp);
-        });
+        }, true);
         for (JButton b : remoteActionButtons) {
             actions.add(b);
             actions.add(Box.createVerticalStrut(6));
@@ -158,6 +171,7 @@ public final class QuikDesktopFrame extends JFrame {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Ответ RPC", new JScrollPane(resultArea));
         tabs.addTab("Колбеки", new JScrollPane(callbackArea));
+        tabs.addTab("Сводка из H2", buildSummaryTab());
 
         JSplitPane vertical = new JSplitPane(JSplitPane.VERTICAL_SPLIT, params, tabs);
         vertical.setResizeWeight(0.18);
@@ -169,7 +183,42 @@ public final class QuikDesktopFrame extends JFrame {
         return wrap;
     }
 
-    private void registerAction(String title, RpcRunnable action) {
+    private JPanel buildSummaryTab() {
+        JPanel panel = new JPanel(new BorderLayout(4, 4));
+        panel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+        JLabel info = new JLabel("Данные из таблицы quik_trade_leg по последнему сохранённому запросу «Сделки по UID».");
+        info.setFont(info.getFont().deriveFont(11f));
+        JButton refresh = new JButton("Обновить из H2");
+        refresh.addActionListener(e -> refreshSummaryFromH2());
+        JPanel top = new JPanel(new BorderLayout());
+        top.add(info, BorderLayout.CENTER);
+        top.add(refresh, BorderLayout.EAST);
+        panel.add(top, BorderLayout.NORTH);
+        summaryTable.setFillsViewportHeight(true);
+        summaryTable.setRowHeight(22);
+        panel.add(new JScrollPane(summaryTable), BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void refreshSummaryFromH2() {
+        try {
+            summaryTableModel.setRowCount(0);
+            List<TradeSummaryRow> rows = repository.loadTradeSummaryForLastStoredBatch();
+            for (TradeSummaryRow r : rows) {
+                summaryTableModel.addRow(new Object[]{
+                        r.classCode(),
+                        r.secCode(),
+                        r.boughtLots(),
+                        r.soldLots(),
+                        r.netLots()
+                });
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Ошибка чтения H2", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void registerAction(String title, RpcRunnable action, boolean refreshSummaryAfterSuccess) {
         JButton b = new JButton(title);
         remoteActionButtons.add(b);
         b.addActionListener(e -> {
@@ -197,6 +246,11 @@ public final class QuikDesktopFrame extends JFrame {
                                     JOptionPane.WARNING_MESSAGE);
                         }
                         appendResultSummary(msg, pretty);
+                        if (refreshSummaryAfterSuccess
+                                && msg.getLuaError() == null
+                                && !"lua_error".equals(msg.getCmd())) {
+                            refreshSummaryFromH2();
+                        }
                     } catch (ExecutionException ex) {
                         Throwable c = ex.getCause() != null ? ex.getCause() : ex;
                         resultArea.setText(stackTrace(c));

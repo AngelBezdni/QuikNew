@@ -876,6 +876,170 @@ function qsfunctions.get_trades_by_client_code(msg)
 	return msg
 end
 
+--[[
+  Универсальная фильтрация сделок на стороне Lua (таблица «Сделки»).
+  msg.data: таблица фильтров ИЛИ JSON-строка с объектом (если пришло из другого клиента).
+  Указанные поля объединяются по И (AND). Нужно хотя бы одно непустое условие.
+
+  Поддерживаемые ключи (все необязательны, кроме требования «хотя бы одно»):
+    class_code, sec_code,
+    client_code,
+    firm_id       — сопоставляется с cpfirmid / firmid / firm_id / trdacc_id,
+    uid           — число; те же поля, что в get_trades_by_uid,
+    order_num     — число,
+    flags         — число,
+    trdacc_id     — торговый счёт (если есть в записи сделки).
+]]
+function qsfunctions.get_trades_filtered(msg)
+	local function read_trade_field(trade, key)
+		local ok, v = pcall(function() return trade[key] end)
+		if ok then
+			return v
+		end
+		return nil
+	end
+
+	local function is_set(v)
+		if v == nil or v == "" or v == json.null then
+			return false
+		end
+		return true
+	end
+
+	local function normalize_filter(data)
+		if data == nil then
+			return nil, "get_trades_filtered: отсутствует msg.data"
+		end
+		if type(data) == "string" then
+			if data == "" then
+				return nil, "get_trades_filtered: пустая строка msg.data"
+			end
+			local ok, t = pcall(json.decode, data, 1, json.null)
+			if not ok or type(t) ~= "table" then
+				return nil, "get_trades_filtered: msg.data не JSON-объект"
+			end
+			data = t
+		end
+		if type(data) ~= "table" then
+			return nil, "get_trades_filtered: msg.data должен быть таблицей или JSON-строкой с объектом"
+		end
+		local has = false
+		for _, k in ipairs({
+			"class_code", "sec_code", "client_code", "firm_id", "uid", "order_num", "flags", "trdacc_id",
+		}) do
+			if is_set(data[k]) then
+				has = true
+				break
+			end
+		end
+		if not has then
+			return nil, "get_trades_filtered: укажите хотя бы одно поле (class_code, sec_code, client_code, firm_id, uid, order_num, flags, trdacc_id)"
+		end
+		return data, nil
+	end
+
+	local function firm_matches_trade(trade, firm_required)
+		if not is_set(firm_required) then
+			return true
+		end
+		local fr = tostring(firm_required)
+		for _, key in ipairs({
+			"cpfirmid", "firmid", "firm_id", "FIRMID", "trdacc_id",
+		}) do
+			local v = read_trade_field(trade, key)
+			if v ~= nil and tostring(v) == fr then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function trade_uid_matches(trade, uid)
+		if uid == nil then
+			return true
+		end
+		local keys = {
+			"on_behalf_of_uid", "userid", "user_id", "uid", "client_uid", "user",
+			"userid_ext", "investment_decision_maker_short_code",
+			"executing_trader_short_code", "client_short_code",
+		}
+		for _, key in ipairs(keys) do
+			local v = read_trade_field(trade, key)
+			if v ~= nil and v ~= "" then
+				local n = tonumber(tostring(v))
+				if n ~= nil and n == uid then
+					return true
+				end
+			end
+		end
+		return false
+	end
+
+	local function trade_matches(trade, f)
+		if is_set(f.class_code) and tostring(read_trade_field(trade, "class_code") or "") ~= tostring(f.class_code) then
+			return false
+		end
+		if is_set(f.sec_code) and tostring(read_trade_field(trade, "sec_code") or "") ~= tostring(f.sec_code) then
+			return false
+		end
+		if is_set(f.client_code) then
+			local cc = read_trade_field(trade, "client_code") or read_trade_field(trade, "CLIENT_CODE")
+			if cc == nil or tostring(cc) ~= tostring(f.client_code) then
+				return false
+			end
+		end
+		if not firm_matches_trade(trade, f.firm_id) then
+			return false
+		end
+		if is_set(f.uid) then
+			local uid = tonumber(tostring(f.uid))
+			if uid == nil or not trade_uid_matches(trade, uid) then
+				return false
+			end
+		end
+		if is_set(f.order_num) then
+			local on = tonumber(tostring(f.order_num))
+			local tn = read_trade_field(trade, "order_num")
+			if on == nil or tn == nil or tonumber(tostring(tn)) ~= on then
+				return false
+			end
+		end
+		if is_set(f.flags) then
+			local fl = tonumber(tostring(f.flags))
+			local tf = read_trade_field(trade, "flags")
+			if fl == nil or tf == nil or tonumber(tostring(tf)) ~= fl then
+				return false
+			end
+		end
+		if is_set(f.trdacc_id) then
+			local want = tostring(f.trdacc_id)
+			local a = read_trade_field(trade, "trdacc_id") or read_trade_field(trade, "TRDACC_ID")
+				or read_trade_field(trade, "account") or read_trade_field(trade, "ACCOUNT")
+			if a == nil or tostring(a) ~= want then
+				return false
+			end
+		end
+		return true
+	end
+
+	local f, err = normalize_filter(msg.data)
+	if not f then
+		msg.cmd = "lua_error"
+		msg.lua_error = err
+		return msg
+	end
+
+	local trades = {}
+	for i = 0, getNumberOf("trades") - 1 do
+		local trade = getItem("trades", i)
+		if trade_matches(trade, f) then
+			table.insert(trades, trade)
+		end
+	end
+	msg.data = trades
+	return msg
+end
+
 -- Функция возвращает таблицу сделок по номеру заявки
 function qsfunctions.get_Trades_by_OrderNumber(msg)
 	local order_num = tonumber(msg.data)

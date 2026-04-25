@@ -1,6 +1,5 @@
 package org.example;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import org.example.quik.ConnSettings;
 import org.example.quik.GetTradesRpcJson;
 import org.example.quik.QuikLineProtocol;
@@ -24,16 +23,11 @@ public final class LuaTradesRequest {
      * Получить все сделки из таблицы "Сделки" (команда Lua: get_trades, data = "").
      */
     public String requestAllTrades(String[] args) throws IOException {
-        ConnSettings s = ConnSettings.fromArgs(args, ConnSettings.DEFAULT_READ_TIMEOUT_MS, 2);
+        ConnSettings s = ConnSettings.fromArgs(args, ConnSettings.DEFAULT_READ_TIMEOUT_TRADES_MS, 2);
         System.out.println("Запрос сделок к Lua: " + s.host() + ":" + s.responsePort() + " / " + s.callbackPort()
                 + " (read timeout " + s.readTimeoutMs() + " ms)");
 
-        final String requestJson;
-        try {
-            requestJson = GetTradesRpcJson.requestLine();
-        } catch (JsonProcessingException e) {
-            throw new IOException("Не удалось собрать JSON запроса сделок", e);
-        }
+        String requestJson = GetTradesRpcJson.requestLine();
         System.out.println("RPC: " + requestJson);
         IOException last = null;
         for (int attempt = 1; attempt <= s.attempts(); attempt++) {
@@ -67,8 +61,9 @@ public final class LuaTradesRequest {
     }
 
     private static String buildTimeoutHint(ConnSettings s, int attempt) {
-        return "Timeout при get_trades (попытка " + attempt + "/" + s.attempts() + "). "
-                + "Увеличьте readTimeoutMs (4-й аргумент запуска) или уменьшите объём данных.";
+        return "Timeout при запросе сделок (попытка " + attempt + "/" + s.attempts() + "). "
+                + "Увеличьте таймаут чтения — 4-й аргумент, миллисекунды (например 3600000 на 1 ч): "
+                + "host port cb 3600000. Либо сузьте выборку: -Dquik.get_trades.cmd / -Dquik.get_trades.data.";
     }
 
     public static void main(String[] args) {

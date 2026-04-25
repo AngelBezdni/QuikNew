@@ -22,7 +22,7 @@ public final class TradeSyncApp {
     }
 
     public static void run(String[] args) throws SQLException, IOException {
-        ConnSettings conn = ConnSettings.fromArgs(args, ConnSettings.DEFAULT_READ_TIMEOUT_MS, 2);
+        ConnSettings conn = ConnSettings.fromArgs(args, ConnSettings.DEFAULT_READ_TIMEOUT_TRADES_MS, 2);
         System.out.println("Синхронизация сделок: " + conn.host() + ":" + conn.responsePort()
                 + " / " + conn.callbackPort() + " (read timeout " + conn.readTimeoutMs() + " ms)");
 

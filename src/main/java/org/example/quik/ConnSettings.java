@@ -8,7 +8,13 @@ public final class ConnSettings {
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_RESPONSE_PORT = 34130;
     public static final int DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+    /** Общий таймаут чтения (ping и т.п.), если не переопределён аргументами. */
     public static final int DEFAULT_READ_TIMEOUT_MS = 60_000;
+    /**
+     * Таймаут чтения для тяжёлых RPC вроде {@code get_trades}: сериализация и передача большого JSON
+     * по одной строке часто занимают заметно больше минуты.
+     */
+    public static final int DEFAULT_READ_TIMEOUT_TRADES_MS = 1_200_000;
 
     private final String host;
     private final int responsePort;

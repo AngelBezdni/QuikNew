@@ -1,6 +1,5 @@
 package org.example.sync;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.quik.ConnSettings;
@@ -27,12 +26,7 @@ public final class TradeBootstrap {
     }
 
     public static BootstrapResult run(ConnSettings settings, H2TradeStore store) throws IOException, SQLException {
-        final String requestJson;
-        try {
-            requestJson = GetTradesRpcJson.requestLine();
-        } catch (JsonProcessingException e) {
-            throw new IOException("Не удалось собрать JSON запроса сделок", e);
-        }
+        String requestJson = GetTradesRpcJson.requestLine();
         System.out.println("Bootstrap RPC: " + requestJson);
         IOException last = null;
         for (int attempt = 1; attempt <= settings.attempts(); attempt++) {
@@ -40,9 +34,12 @@ public final class TradeBootstrap {
                 QuikLineProtocol.writeJsonLine(pair.response(), requestJson);
                 String line = QuikLineProtocol.readJsonLineStreaming(pair.response());
                 JsonNode root = MAPPER.readTree(line);
+                if ("lua_error".equals(root.path("cmd").asText())) {
+                    throw new IOException("Lua: " + root.path("lua_error").asText("неизвестная ошибка"));
+                }
                 JsonNode data = root.get("data");
                 if (data == null || !data.isArray()) {
-                    throw new IOException("Ожидался массив в поле data ответа get_trades, получено: " + line.substring(0, Math.min(200, line.length())));
+                    throw new IOException("Ожидался массив в поле data, получено: " + line.substring(0, Math.min(200, line.length())));
                 }
                 int n = data.size();
                 int inserted = 0;

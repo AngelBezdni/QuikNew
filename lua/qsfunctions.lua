@@ -814,6 +814,68 @@ function qsfunctions.get_trades_by_uid(msg)
 	return msg
 end
 
+-- Возвращает сделки по client_code (и опционально по фирме), фильтрация на стороне Lua — меньший JSON к Java.
+-- msg.data: только client_code, либо firm_id|client_code (разделитель |).
+function qsfunctions.get_trades_by_client_code(msg)
+	if msg.data == nil or msg.data == "" then
+		msg.cmd = "lua_error"
+		msg.lua_error = "get_trades_by_client_code: укажите msg.data — client_code или firm_id|client_code"
+		return msg
+	end
+
+	local function field(trade, key)
+		local ok, v = pcall(function() return trade[key] end)
+		if ok then
+			return v
+		end
+		return nil
+	end
+
+	local spl = split(tostring(msg.data), "|")
+	local firm_required = nil
+	local client_required = nil
+	if #spl >= 2 and spl[1] ~= "" and spl[2] ~= "" then
+		firm_required = tostring(spl[1])
+		client_required = tostring(spl[2])
+	else
+		client_required = tostring(msg.data)
+	end
+
+	local function firm_matches(trade)
+		if firm_required == nil then
+			return true
+		end
+		for _, key in ipairs({
+			"cpfirmid",
+			"firmid",
+			"firm_id",
+			"FIRMID",
+			"trdacc_id",
+		}) do
+			local v = field(trade, key)
+			if v ~= nil and tostring(v) == firm_required then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function client_matches(trade)
+		local cc = field(trade, "client_code") or field(trade, "CLIENT_CODE")
+		return cc ~= nil and tostring(cc) == client_required
+	end
+
+	local trades = {}
+	for i = 0, getNumberOf("trades") - 1 do
+		local trade = getItem("trades", i)
+		if client_matches(trade) and firm_matches(trade) then
+			table.insert(trades, trade)
+		end
+	end
+	msg.data = trades
+	return msg
+end
+
 -- Функция возвращает таблицу сделок по номеру заявки
 function qsfunctions.get_Trades_by_OrderNumber(msg)
 	local order_num = tonumber(msg.data)

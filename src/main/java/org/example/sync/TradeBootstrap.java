@@ -1,8 +1,10 @@
 package org.example.sync;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.quik.ConnSettings;
+import org.example.quik.GetTradesRpcJson;
 import org.example.quik.QuikLineProtocol;
 import org.example.quik.QuikSocketPair;
 import org.example.storage.H2TradeStore;
@@ -15,21 +17,27 @@ import java.net.SocketTimeoutException;
 import java.sql.SQLException;
 
 /**
- * Однократная выгрузка истории через {@code get_trades} в H2.
+ * Однократная выгрузка истории сделок в H2 (команда и {@code data} — см. {@link org.example.quik.GetTradesRpcJson}).
  */
 public final class TradeBootstrap {
 
-    private static final String GET_TRADES = "{\"cmd\":\"get_trades\",\"data\":\"\"}";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private TradeBootstrap() {
     }
 
     public static BootstrapResult run(ConnSettings settings, H2TradeStore store) throws IOException, SQLException {
+        final String requestJson;
+        try {
+            requestJson = GetTradesRpcJson.requestLine();
+        } catch (JsonProcessingException e) {
+            throw new IOException("Не удалось собрать JSON запроса сделок", e);
+        }
+        System.out.println("Bootstrap RPC: " + requestJson);
         IOException last = null;
         for (int attempt = 1; attempt <= settings.attempts(); attempt++) {
             try (QuikSocketPair pair = QuikSocketPair.open(settings)) {
-                QuikLineProtocol.writeJsonLine(pair.response(), GET_TRADES);
+                QuikLineProtocol.writeJsonLine(pair.response(), requestJson);
                 String line = QuikLineProtocol.readJsonLineStreaming(pair.response());
                 JsonNode root = MAPPER.readTree(line);
                 JsonNode data = root.get("data");

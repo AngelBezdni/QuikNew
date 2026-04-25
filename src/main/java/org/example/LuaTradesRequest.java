@@ -1,6 +1,8 @@
 package org.example;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.example.quik.ConnSettings;
+import org.example.quik.GetTradesRpcJson;
 import org.example.quik.QuikLineProtocol;
 import org.example.quik.QuikSocketPair;
 
@@ -23,10 +25,16 @@ public final class LuaTradesRequest {
      */
     public String requestAllTrades(String[] args) throws IOException {
         ConnSettings s = ConnSettings.fromArgs(args, ConnSettings.DEFAULT_READ_TIMEOUT_MS, 2);
-        System.out.println("Запрос get_trades к Lua: " + s.host() + ":" + s.responsePort() + " / " + s.callbackPort()
+        System.out.println("Запрос сделок к Lua: " + s.host() + ":" + s.responsePort() + " / " + s.callbackPort()
                 + " (read timeout " + s.readTimeoutMs() + " ms)");
 
-        String requestJson = "{\"cmd\":\"get_trades\",\"data\":\"\"}";
+        final String requestJson;
+        try {
+            requestJson = GetTradesRpcJson.requestLine();
+        } catch (JsonProcessingException e) {
+            throw new IOException("Не удалось собрать JSON запроса сделок", e);
+        }
+        System.out.println("RPC: " + requestJson);
         IOException last = null;
         for (int attempt = 1; attempt <= s.attempts(); attempt++) {
             try (QuikSocketPair pair = QuikSocketPair.open(s)) {

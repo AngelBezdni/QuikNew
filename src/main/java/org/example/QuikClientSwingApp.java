@@ -24,6 +24,7 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.Timer;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.sql.SQLException;
@@ -58,6 +59,8 @@ public final class QuikClientSwingApp {
     private final JButton pingButton = new JButton("Ping");
     private final JButton syncButton = new JButton("Синхронизация сделок");
     private final JButton stopLiveButton = new JButton("Стоп live");
+    private final JLabel liveStatusLabel = new JLabel("LIVE: OFF");
+    private final JLabel liveCountersLabel = new JLabel("handled=0, inserted=0, dedup=0");
 
     private final SummaryTableModel summaryModel = new SummaryTableModel();
     private final SecSummaryService summaryService = new SecSummaryService(summaryModel);
@@ -67,6 +70,7 @@ public final class QuikClientSwingApp {
     private QuikSocketPair livePair;
     private TradeCallbackListener liveListener;
     private Thread liveThread;
+    private Timer uiStatsTimer;
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new QuikClientSwingApp().show());
@@ -106,6 +110,11 @@ public final class QuikClientSwingApp {
         buttons.add(stopLiveButton);
         stopLiveButton.setEnabled(false);
         root.add(buttons);
+
+        JPanel liveInfo = new JPanel();
+        liveInfo.add(liveStatusLabel);
+        liveInfo.add(liveCountersLabel);
+        root.add(liveInfo);
 
         logArea.setEditable(false);
         JScrollPane scroll = new JScrollPane(logArea);
@@ -219,6 +228,8 @@ public final class QuikClientSwingApp {
         liveThread = new Thread(liveListener, "quik-ontrade-ui");
         liveThread.setDaemon(true);
         liveThread.start();
+        startUiStatsTimer();
+        liveStatusLabel.setText("LIVE: ON");
         log("Live OnTrade запущен.");
     }
 
@@ -228,6 +239,7 @@ public final class QuikClientSwingApp {
     }
 
     private void stopLive() throws Exception {
+        stopUiStatsTimer();
         if (liveListener != null) {
             liveListener.requestStop();
         }
@@ -254,6 +266,8 @@ public final class QuikClientSwingApp {
         liveThread = null;
         livePair = null;
         liveStore = null;
+        liveStatusLabel.setText("LIVE: OFF");
+        liveCountersLabel.setText("handled=0, inserted=0, dedup=0");
         log("Live OnTrade остановлен.");
     }
 
@@ -309,6 +323,26 @@ public final class QuikClientSwingApp {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private void startUiStatsTimer() {
+        stopUiStatsTimer();
+        uiStatsTimer = new Timer(500, e -> {
+            TradeCallbackListener l = liveListener;
+            if (l != null) {
+                liveCountersLabel.setText("handled=" + l.onTradeHandled()
+                        + ", inserted=" + l.inserted()
+                        + ", dedup=" + l.skippedDup());
+            }
+        });
+        uiStatsTimer.start();
+    }
+
+    private void stopUiStatsTimer() {
+        if (uiStatsTimer != null) {
+            uiStatsTimer.stop();
+            uiStatsTimer = null;
+        }
     }
 
     private void log(String text) {

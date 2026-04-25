@@ -21,6 +21,19 @@ public final class TradeSyncApp {
         run(args);
     }
 
+    public static TradeBootstrap.BootstrapResult runBootstrapOnly(String[] args) throws SQLException, IOException {
+        ConnSettings conn = ConnSettings.fromArgs(args, ConnSettings.DEFAULT_READ_TIMEOUT_TRADES_MS, 2);
+        System.out.println("Синхронизация сделок (bootstrap-only): " + conn.host() + ":" + conn.responsePort()
+                + " / " + conn.callbackPort() + " (read timeout " + conn.readTimeoutMs() + " ms)");
+        try (H2TradeStore store = H2TradeStore.fromPropertyOrDefault()) {
+            store.init();
+            TradeBootstrap.BootstrapResult boot = TradeBootstrap.run(conn, store);
+            System.out.println("Bootstrap get_trades: всего элементов=" + boot.totalRows()
+                    + ", вставлено=" + boot.inserted() + ", дубликатов=" + boot.skippedDuplicates());
+            return boot;
+        }
+    }
+
     public static void run(String[] args) throws SQLException, IOException {
         ConnSettings conn = ConnSettings.fromArgs(args, ConnSettings.DEFAULT_READ_TIMEOUT_TRADES_MS, 2);
         System.out.println("Синхронизация сделок: " + conn.host() + ":" + conn.responsePort()

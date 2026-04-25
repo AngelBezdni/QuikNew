@@ -58,8 +58,9 @@ public final class SummaryTableModel extends AbstractTableModel {
     public void replaceAll(List<Row> snapshot) {
         rows.clear();
         idx.clear();
-        snapshot.sort(Comparator.comparing(a -> a.secCode));
-        for (Row r : snapshot) {
+        List<Row> sorted = new ArrayList<>(snapshot);
+        sorted.sort(Comparator.comparing(a -> a.secCode));
+        for (Row r : sorted) {
             int i = rows.size();
             rows.add(new Row(
                     r.secCode, nz(r.buy), nz(r.sell), nz(r.buyQty), nz(r.sellQty),

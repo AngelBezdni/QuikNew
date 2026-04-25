@@ -5,7 +5,9 @@ import org.example.quik.dto.QuikMessage;
 import org.example.quik.json.QuikJson;
 import org.example.quik.rpc.QuikRpcClient;
 import org.example.quik.session.QuikSharpSession;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.example.analytics.TradeSummaryRow;
+import org.example.analytics.TradeRowParser;
 import org.example.scripts.GetTradesByUidScript;
 import org.example.scripts.LogCallbackScript;
 import org.example.scripts.PingScript;
@@ -25,6 +27,7 @@ import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.JToggleButton;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
@@ -41,7 +44,8 @@ import java.net.ConnectException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -81,6 +85,27 @@ public final class QuikDesktopFrame extends JFrame {
         }
     };
     private final JTable summaryTable = new JTable(summaryTableModel);
+    private final DefaultTableModel liveTableModel = new DefaultTableModel(
+            new Object[]{
+                    "Класс",
+                    "SEC",
+                    "Куп, лот",
+                    "Прод, лот",
+                    "Остаток (куп−прод), лот",
+                    "Сумма покупок, ₽",
+                    "Сумма продаж, ₽",
+                    "Разница min×(прод−куп), ₽",
+                    "Остаток в ₽"
+            }, 0) {
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return false;
+        }
+    };
+    private final JTable liveTable = new JTable(liveTableModel);
+    private final JToggleButton liveToggleBtn = new JToggleButton("Live позиции: OFF");
+    private final Map<String, LiveStats> liveStatsByInstrument = new LinkedHashMap<>();
+    private volatile boolean liveTrackingEnabled = false;
 
     private final JButton connectBtn = new JButton("Подключиться");
     private final JButton disconnectBtn = new JButton("Отключиться");
@@ -159,10 +184,13 @@ public final class QuikDesktopFrame extends JFrame {
             QuikMessage resp = new GetTradesByUidScript(rpcRef.get()).run(uid);
             return runRpc("get_trades_by_uid", "uid=" + uid, resp);
         }, true);
+        liveToggleBtn.addActionListener(e -> toggleLiveTracking());
         for (JButton b : remoteActionButtons) {
             actions.add(b);
             actions.add(Box.createVerticalStrut(6));
         }
+        actions.add(liveToggleBtn);
+        actions.add(Box.createVerticalStrut(6));
         actions.add(Box.createVerticalGlue());
 
         JPanel params = new JPanel();
@@ -183,6 +211,7 @@ public final class QuikDesktopFrame extends JFrame {
         tabs.addTab("Ответ RPC", new JScrollPane(resultArea));
         tabs.addTab("Колбеки", new JScrollPane(callbackArea));
         tabs.addTab("Сводка из H2", buildSummaryTab());
+        tabs.addTab("Live позиции", buildLiveTab());
 
         JSplitPane vertical = new JSplitPane(JSplitPane.VERTICAL_SPLIT, params, tabs);
         vertical.setResizeWeight(0.18);
@@ -213,6 +242,19 @@ public final class QuikDesktopFrame extends JFrame {
         return panel;
     }
 
+    private JPanel buildLiveTab() {
+        JPanel panel = new JPanel(new BorderLayout(4, 4));
+        panel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+        JLabel info = new JLabel("<html>Реальное время по callback <code>OnTrade</code>. "
+                + "Включите кнопкой «Live позиции: ON». Пересчет: куп/прод/остаток, суммы, разница и остаток в ₽.</html>");
+        info.setFont(info.getFont().deriveFont(11f));
+        panel.add(info, BorderLayout.NORTH);
+        liveTable.setFillsViewportHeight(true);
+        liveTable.setRowHeight(22);
+        panel.add(new JScrollPane(liveTable), BorderLayout.CENTER);
+        return panel;
+    }
+
     private void refreshSummaryFromH2() {
         try {
             summaryTableModel.setRowCount(0);
@@ -232,6 +274,74 @@ public final class QuikDesktopFrame extends JFrame {
             }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Ошибка чтения H2", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void toggleLiveTracking() {
+        liveTrackingEnabled = liveToggleBtn.isSelected();
+        liveToggleBtn.setText(liveTrackingEnabled ? "Live позиции: ON" : "Live позиции: OFF");
+        if (liveTrackingEnabled) {
+            liveStatsByInstrument.clear();
+            renderLiveTable();
+        }
+    }
+
+    private void processLiveTrade(JsonNode trade) {
+        if (trade == null || !trade.isObject()) {
+            return;
+        }
+        if (!TradeRowParser.hasSecCode(trade)) {
+            return;
+        }
+        long qty = TradeRowParser.qtyLots(trade);
+        if (qty <= 0) {
+            return;
+        }
+        String classCode = TradeRowParser.classCode(trade);
+        String secCode = TradeRowParser.secCode(trade);
+        double amount = TradeRowParser.amountRub(trade);
+        boolean isSell = TradeRowParser.isSell(trade);
+        String key = classCode + "|" + secCode;
+        synchronized (liveStatsByInstrument) {
+            LiveStats s = liveStatsByInstrument.computeIfAbsent(key, k -> new LiveStats(classCode, secCode));
+            if (isSell) {
+                s.soldLots += qty;
+                s.sumSellRub += Math.abs(amount);
+            } else {
+                s.boughtLots += qty;
+                s.sumBuyRub += Math.abs(amount);
+            }
+        }
+        SwingUtilities.invokeLater(this::renderLiveTable);
+    }
+
+    private void renderLiveTable() {
+        synchronized (liveStatsByInstrument) {
+            liveTableModel.setRowCount(0);
+            for (LiveStats s : liveStatsByInstrument.values()) {
+                long net = s.boughtLots - s.soldLots;
+                long matched = Math.min(s.boughtLots, s.soldLots);
+                double avgBuy = s.boughtLots > 0 ? s.sumBuyRub / s.boughtLots : 0.0;
+                double avgSell = s.soldLots > 0 ? s.sumSellRub / s.soldLots : 0.0;
+                double realized = matched * (avgSell - avgBuy);
+                double remainderRub = 0.0;
+                if (net > 0) {
+                    remainderRub = net * avgBuy;
+                } else if (net < 0) {
+                    remainderRub = Math.abs((double) net) * avgSell;
+                }
+                liveTableModel.addRow(new Object[]{
+                        s.classCode,
+                        s.secCode,
+                        s.boughtLots,
+                        s.soldLots,
+                        net,
+                        formatMoney(s.sumBuyRub),
+                        formatMoney(s.sumSellRub),
+                        formatMoney(realized),
+                        formatMoney(remainderRub)
+                });
+            }
         }
     }
 
@@ -319,6 +429,9 @@ public final class QuikDesktopFrame extends JFrame {
                 callbackScript = new LogCallbackScript(session, msg -> {
                     try {
                         repository.saveCallback(msg);
+                        if (liveTrackingEnabled && "OnTrade".equals(msg.getCmd())) {
+                            processLiveTrade(msg.getData());
+                        }
                         String line = QuikJson.mapper().writeValueAsString(msg) + "\n";
                         SwingUtilities.invokeLater(() -> {
                             callbackArea.append(line);
@@ -367,6 +480,11 @@ public final class QuikDesktopFrame extends JFrame {
         }
         connectBtn.setEnabled(true);
         setRemoteButtonsEnabled(false);
+        liveTrackingEnabled = false;
+        liveToggleBtn.setSelected(false);
+        liveToggleBtn.setText("Live позиции: OFF");
+        liveStatsByInstrument.clear();
+        renderLiveTable();
         resultArea.setText("Отключено.");
     }
 
@@ -374,6 +492,7 @@ public final class QuikDesktopFrame extends JFrame {
         for (JButton b : remoteActionButtons) {
             b.setEnabled(on);
         }
+        liveToggleBtn.setEnabled(on);
     }
 
     private ConnectionSettings readSettings() {
@@ -406,5 +525,19 @@ public final class QuikDesktopFrame extends JFrame {
     @FunctionalInterface
     private interface RpcRunnable {
         QuikMessage run() throws Exception;
+    }
+
+    private static final class LiveStats {
+        private final String classCode;
+        private final String secCode;
+        private long boughtLots;
+        private long soldLots;
+        private double sumBuyRub;
+        private double sumSellRub;
+
+        private LiveStats(String classCode, String secCode) {
+            this.classCode = classCode;
+            this.secCode = secCode;
+        }
     }
 }

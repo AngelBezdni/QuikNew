@@ -125,7 +125,23 @@ public final class H2TradeStore implements AutoCloseable {
                                 THEN COALESCE(value_rub, COALESCE(qty, 0) * COALESCE(price, 0))
                                 ELSE 0 END
                         ELSE 0
-                    END) AS sell_sum
+                    END) AS sell_sum,
+                    SUM(CASE
+                        WHEN UPPER(COALESCE(operation, '')) = 'B' THEN COALESCE(qty, 0)
+                        WHEN operation IS NULL OR operation = '' THEN
+                            CASE WHEN BITAND(COALESCE(flags, 0), 4) = 0
+                                THEN COALESCE(qty, 0)
+                                ELSE 0 END
+                        ELSE 0
+                    END) AS buy_qty,
+                    SUM(CASE
+                        WHEN UPPER(COALESCE(operation, '')) = 'S' THEN COALESCE(qty, 0)
+                        WHEN operation IS NULL OR operation = '' THEN
+                            CASE WHEN BITAND(COALESCE(flags, 0), 4) <> 0
+                                THEN COALESCE(qty, 0)
+                                ELSE 0 END
+                        ELSE 0
+                    END) AS sell_qty
                 FROM trade_fact
                 GROUP BY COALESCE(sec_code, '')
                 ORDER BY COALESCE(sec_code, '')
@@ -137,7 +153,9 @@ public final class H2TradeStore implements AutoCloseable {
                 rows.add(new SecSummaryRow(
                         rs.getString("sec_code"),
                         rs.getBigDecimal("buy_sum"),
-                        rs.getBigDecimal("sell_sum")));
+                        rs.getBigDecimal("sell_sum"),
+                        rs.getBigDecimal("buy_qty"),
+                        rs.getBigDecimal("sell_qty")));
             }
         }
         return rows;
@@ -158,7 +176,13 @@ public final class H2TradeStore implements AutoCloseable {
         return key;
     }
 
-    public record SecSummaryRow(String secCode, java.math.BigDecimal buySum, java.math.BigDecimal sellSum) {
+    public record SecSummaryRow(
+            String secCode,
+            java.math.BigDecimal buySum,
+            java.math.BigDecimal sellSum,
+            java.math.BigDecimal buyQty,
+            java.math.BigDecimal sellQty
+    ) {
     }
 
     private static String emptyToNull(String s) {

@@ -26,7 +26,12 @@ public final class SecSummaryService {
         List<H2TradeStore.SecSummaryRow> dbRows = store.loadSecSummaryRows();
         List<SummaryTableModel.Row> uiRows = new ArrayList<>(dbRows.size());
         for (H2TradeStore.SecSummaryRow r : dbRows) {
-            uiRows.add(new SummaryTableModel.Row(r.secCode(), nz(r.buySum()), nz(r.sellSum())));
+            uiRows.add(new SummaryTableModel.Row(
+                    r.secCode(),
+                    nz(r.buySum()),
+                    nz(r.sellSum()),
+                    nz(r.buyQty()),
+                    nz(r.sellQty())));
         }
         runOnEdt(() -> model.replaceAll(uiRows));
     }
@@ -36,15 +41,22 @@ public final class SecSummaryService {
         String side = resolveSide(t);
         BigDecimal buyDelta = BigDecimal.ZERO;
         BigDecimal sellDelta = BigDecimal.ZERO;
+        BigDecimal buyQtyDelta = BigDecimal.ZERO;
+        BigDecimal sellQtyDelta = BigDecimal.ZERO;
+        BigDecimal qty = tradeQty(t);
         if ("B".equals(side)) {
             buyDelta = amount;
+            buyQtyDelta = qty;
         } else if ("S".equals(side)) {
             sellDelta = amount;
+            sellQtyDelta = qty;
         }
         String sec = t.secCode() == null ? "" : t.secCode();
         final BigDecimal b = buyDelta;
         final BigDecimal s = sellDelta;
-        runOnEdt(() -> model.applyDelta(sec, b, s));
+        final BigDecimal bq = buyQtyDelta;
+        final BigDecimal sq = sellQtyDelta;
+        runOnEdt(() -> model.applyDelta(sec, b, s, bq, sq));
     }
 
     private static String resolveSide(TradeRecord t) {
@@ -72,6 +84,13 @@ public final class SecSummaryService {
         if (t.qty() != null && t.price() != null) {
             return t.qty().multiply(t.price());
         }
+        if (t.qty() != null) {
+            return t.qty();
+        }
+        return BigDecimal.ZERO;
+    }
+
+    private static BigDecimal tradeQty(TradeRecord t) {
         if (t.qty() != null) {
             return t.qty();
         }

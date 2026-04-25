@@ -2,6 +2,7 @@ package org.example.summary;
 
 import javax.swing.table.AbstractTableModel;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,11 +37,11 @@ public final class SummaryTableModel extends AbstractTableModel {
         Row r = rows.get(rowIndex);
         return switch (columnIndex) {
             case 0 -> r.secCode;
-            case 1 -> r.buy;
-            case 2 -> r.sell;
-            case 3 -> r.buyQty;
-            case 4 -> r.sellQty;
-            case 5 -> r.buyQty.subtract(r.sellQty);
+            case 1 -> format2(r.buy);
+            case 2 -> format2(r.sell);
+            case 3 -> format2(r.buyQty);
+            case 4 -> format2(r.sellQty);
+            case 5 -> format2(r.buyQty.subtract(r.sellQty));
             default -> "";
         };
     }
@@ -98,5 +99,11 @@ public final class SummaryTableModel extends AbstractTableModel {
 
     private static BigDecimal nz(BigDecimal v) {
         return v == null ? BigDecimal.ZERO : v;
+    }
+
+    private static String format2(BigDecimal v) {
+        BigDecimal n = nz(v).setScale(2, RoundingMode.HALF_UP).stripTrailingZeros();
+        String s = n.toPlainString();
+        return "-0" .equals(s) ? "0" : s;
     }
 }

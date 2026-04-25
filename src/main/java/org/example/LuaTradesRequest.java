@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.InetSocketAddress;
+import java.net.ConnectException;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
@@ -22,26 +23,36 @@ public final class LuaTradesRequest {
 
     private static final String DEFAULT_HOST = "127.0.0.1";
     private static final int DEFAULT_RESPONSE_PORT = 34130;
-    private static final int DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
-    private static final int DEFAULT_READ_TIMEOUT_MS = 15_000;
+    private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+    private static final int DEFAULT_READ_TIMEOUT_MS = 60_000;
+    private static final int DEFAULT_ATTEMPTS = 2;
 
     /**
      * Получить все сделки из таблицы "Сделки" (команда Lua: get_trades, data = "").
      */
     public String requestAllTrades(String[] args) throws IOException {
         Settings s = Settings.fromArgs(args);
-        System.out.println("Запрос get_trades к Lua: " + s.host + ":" + s.responsePort + " / " + s.callbackPort);
+        System.out.println("Запрос get_trades к Lua: " + s.host + ":" + s.responsePort + " / " + s.callbackPort
+                + " (read timeout " + s.readTimeoutMs + " ms)");
 
-        try (Socket response = connect(s.host, s.responsePort, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_READ_TIMEOUT_MS);
-             Socket callback = connect(s.host, s.callbackPort, DEFAULT_CONNECT_TIMEOUT_MS, 0)) {
+        IOException last = null;
+        for (int attempt = 1; attempt <= s.attempts; attempt++) {
+            try (Socket response = connect(s.host, s.responsePort, s.connectTimeoutMs, s.readTimeoutMs);
+                 Socket callback = connect(s.host, s.callbackPort, s.connectTimeoutMs, 0)) {
 
-            String requestJson = "{\"cmd\":\"get_trades\",\"data\":\"\"}";
-            String responseJson = rpc(response, requestJson);
-            System.out.println("Lua ответ получен.");
-            return responseJson;
-        } catch (SocketTimeoutException e) {
-            throw new IOException("Таймаут при get_trades: " + e.getMessage(), e);
+                String requestJson = "{\"cmd\":\"get_trades\",\"data\":\"\"}";
+                String responseJson = rpc(response, requestJson);
+                System.out.println("Lua ответ получен.");
+                return responseJson;
+            } catch (SocketTimeoutException e) {
+                last = new IOException(buildTimeoutHint(s, attempt), e);
+            } catch (ConnectException e) {
+                last = new IOException(buildConnectHint(s), e);
+                break;
+            }
+            sleepQuiet(500L * attempt);
         }
+        throw last != null ? last : new IOException("Неизвестная ошибка запроса get_trades");
     }
 
     private static Socket connect(String host, int port, int connectTimeoutMs, int readTimeoutMs) throws IOException {
@@ -65,6 +76,24 @@ public final class LuaTradesRequest {
         return line;
     }
 
+    private static void sleepQuiet(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static String buildConnectHint(Settings s) {
+        return "Connection refused: на " + s.host + ":" + s.responsePort + " или " + s.callbackPort + " нет слушателя. "
+                + "Проверьте запуск Lua-скрипта в QUIK и порты.";
+    }
+
+    private static String buildTimeoutHint(Settings s, int attempt) {
+        return "Timeout при get_trades (попытка " + attempt + "/" + s.attempts + "). "
+                + "Увеличьте readTimeoutMs (4-й аргумент запуска) или уменьшите объём данных.";
+    }
+
     public static void main(String[] args) {
         try {
             String response = new LuaTradesRequest().requestAllTrades(args);
@@ -79,21 +108,36 @@ public final class LuaTradesRequest {
         private final String host;
         private final int responsePort;
         private final int callbackPort;
+        private final int connectTimeoutMs;
+        private final int readTimeoutMs;
+        private final int attempts;
 
-        private Settings(String host, int responsePort, int callbackPort) {
+        private Settings(String host, int responsePort, int callbackPort, int connectTimeoutMs, int readTimeoutMs, int attempts) {
             this.host = host;
             this.responsePort = responsePort;
             this.callbackPort = callbackPort;
+            this.connectTimeoutMs = connectTimeoutMs;
+            this.readTimeoutMs = readTimeoutMs;
+            this.attempts = attempts;
         }
 
         private static Settings fromArgs(String[] args) {
             if (args == null || args.length == 0) {
-                return new Settings(DEFAULT_HOST, DEFAULT_RESPONSE_PORT, DEFAULT_RESPONSE_PORT + 1);
+                return new Settings(
+                        DEFAULT_HOST,
+                        DEFAULT_RESPONSE_PORT,
+                        DEFAULT_RESPONSE_PORT + 1,
+                        DEFAULT_CONNECT_TIMEOUT_MS,
+                        DEFAULT_READ_TIMEOUT_MS,
+                        DEFAULT_ATTEMPTS);
             }
             String host = args[0];
             int response = args.length >= 2 ? Integer.parseInt(args[1]) : DEFAULT_RESPONSE_PORT;
             int callback = args.length >= 3 ? Integer.parseInt(args[2]) : response + 1;
-            return new Settings(host, response, callback);
+            int readTimeout = args.length >= 4 ? Integer.parseInt(args[3]) : DEFAULT_READ_TIMEOUT_MS;
+            int connectTimeout = args.length >= 5 ? Integer.parseInt(args[4]) : DEFAULT_CONNECT_TIMEOUT_MS;
+            int attempts = args.length >= 6 ? Integer.parseInt(args[5]) : DEFAULT_ATTEMPTS;
+            return new Settings(host, response, callback, connectTimeout, readTimeout, Math.max(1, attempts));
         }
     }
 }

@@ -21,16 +21,16 @@ public final class LuaConnectionTest {
 
     private static final String DEFAULT_HOST = "127.0.0.1";
     private static final int DEFAULT_RESPONSE_PORT = 34130;
-    private static final int DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
-    private static final int DEFAULT_READ_TIMEOUT_MS = 8_000;
+    private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+    private static final int DEFAULT_READ_TIMEOUT_MS = 20_000;
 
     public void run(String[] args) throws IOException {
         Settings s = Settings.fromArgs(args);
         System.out.println("Проверка Lua-соединения: " + s.host + ":" + s.responsePort + " / " + s.callbackPort);
 
         try {
-            try (Socket response = connect(s.host, s.responsePort, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_READ_TIMEOUT_MS);
-                 Socket callback = connect(s.host, s.callbackPort, DEFAULT_CONNECT_TIMEOUT_MS, 0)) {
+            try (Socket response = connect(s.host, s.responsePort, s.connectTimeoutMs, s.readTimeoutMs);
+                 Socket callback = connect(s.host, s.callbackPort, s.connectTimeoutMs, 0)) {
 
                 // В QUIK# важен порядок: сначала response, потом callback.
                 System.out.println("TCP OK: response и callback подключены.");
@@ -74,11 +74,12 @@ public final class LuaConnectionTest {
                 + "1) В QUIK запущен Lua-скрипт сервера (QuikSharp/Quik_2).\n"
                 + "2) Порты совпадают с config.json.\n"
                 + "3) Для Quik_2 обычно: response=34132, callback=34133.\n"
-                + "Пример запуска: 127.0.0.1 34132 34133";
+                + "Пример запуска: 127.0.0.1 34132 34133 20000 10000";
     }
 
     private static String buildTimeoutHint(Settings s) {
-        return "Timeout при подключении/чтении " + s.host + ":" + s.responsePort + " / " + s.callbackPort + ".\n"
+        return "Timeout при подключении/чтении " + s.host + ":" + s.responsePort + " / " + s.callbackPort
+                + " (read timeout " + s.readTimeoutMs + " ms).\n"
                 + "Проверьте доступность портов и локальные firewall/антивирус.";
     }
 
@@ -86,21 +87,32 @@ public final class LuaConnectionTest {
         private final String host;
         private final int responsePort;
         private final int callbackPort;
+        private final int readTimeoutMs;
+        private final int connectTimeoutMs;
 
-        private Settings(String host, int responsePort, int callbackPort) {
+        private Settings(String host, int responsePort, int callbackPort, int readTimeoutMs, int connectTimeoutMs) {
             this.host = host;
             this.responsePort = responsePort;
             this.callbackPort = callbackPort;
+            this.readTimeoutMs = readTimeoutMs;
+            this.connectTimeoutMs = connectTimeoutMs;
         }
 
         private static Settings fromArgs(String[] args) {
             if (args == null || args.length == 0) {
-                return new Settings(DEFAULT_HOST, DEFAULT_RESPONSE_PORT, DEFAULT_RESPONSE_PORT + 1);
+                return new Settings(
+                        DEFAULT_HOST,
+                        DEFAULT_RESPONSE_PORT,
+                        DEFAULT_RESPONSE_PORT + 1,
+                        DEFAULT_READ_TIMEOUT_MS,
+                        DEFAULT_CONNECT_TIMEOUT_MS);
             }
             String host = args[0];
             int response = args.length >= 2 ? Integer.parseInt(args[1]) : DEFAULT_RESPONSE_PORT;
             int callback = args.length >= 3 ? Integer.parseInt(args[2]) : response + 1;
-            return new Settings(host, response, callback);
+            int readTimeout = args.length >= 4 ? Integer.parseInt(args[3]) : DEFAULT_READ_TIMEOUT_MS;
+            int connectTimeout = args.length >= 5 ? Integer.parseInt(args[4]) : DEFAULT_CONNECT_TIMEOUT_MS;
+            return new Settings(host, response, callback, readTimeout, connectTimeout);
         }
     }
 }

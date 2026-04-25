@@ -9,6 +9,7 @@ import org.example.summary.SecSummaryService;
 import org.example.summary.SummaryTableModel;
 import org.example.sync.TradeBootstrap;
 import org.example.sync.TradeCallbackListener;
+import org.example.trade.TradeFilterSpec;
 import org.example.trade.TradeRecord;
 
 import javax.swing.BorderFactory;
@@ -60,7 +61,7 @@ public final class QuikClientSwingApp {
     private final JButton syncButton = new JButton("Синхронизация сделок");
     private final JButton stopLiveButton = new JButton("Стоп live");
     private final JLabel liveStatusLabel = new JLabel("LIVE: OFF");
-    private final JLabel liveCountersLabel = new JLabel("handled=0, inserted=0, dedup=0, parseErr=0");
+    private final JLabel liveCountersLabel = new JLabel("handled=0, inserted=0, dedup=0, filtered=0, parseErr=0");
 
     private final SummaryTableModel summaryModel = new SummaryTableModel();
     private final SecSummaryService summaryService = new SecSummaryService(summaryModel);
@@ -197,6 +198,7 @@ public final class QuikClientSwingApp {
 
     private void runSyncAndStartLive() throws Exception {
         stopLive();
+        TradeFilterSpec liveFilterSpec = buildFilterSpec();
         String[] connArgs = buildConnArgs();
         String prevFilterJson = System.getProperty("quik.get_trades.filter_json");
         String prevFilterFile = System.getProperty("quik.get_trades.filter_file");
@@ -224,7 +226,7 @@ public final class QuikClientSwingApp {
         summaryService.loadInitial(liveStore);
 
         livePair = QuikSocketPair.open(s);
-        liveListener = new TradeCallbackListener(livePair.callback(), liveStore, this::onInsertedTrade);
+        liveListener = new TradeCallbackListener(livePair.callback(), liveStore, this::onInsertedTrade, liveFilterSpec);
         liveThread = new Thread(liveListener, "quik-ontrade-ui");
         liveThread.setDaemon(true);
         liveThread.start();
@@ -267,7 +269,7 @@ public final class QuikClientSwingApp {
         livePair = null;
         liveStore = null;
         liveStatusLabel.setText("LIVE: OFF");
-        liveCountersLabel.setText("handled=0, inserted=0, dedup=0, parseErr=0");
+        liveCountersLabel.setText("handled=0, inserted=0, dedup=0, filtered=0, parseErr=0");
         log("Live OnTrade остановлен.");
     }
 
@@ -299,6 +301,17 @@ public final class QuikClientSwingApp {
         return MAPPER.writeValueAsString(n);
     }
 
+    private TradeFilterSpec buildFilterSpec() {
+        String classCode = classCodeField.getText().trim();
+        String secCode = secCodeField.getText().trim();
+        String clientCode = clientCodeField.getText().trim();
+        String firmId = firmIdField.getText().trim();
+        String trdacc = trdAccField.getText().trim();
+        Long uid = parseLongOrNull(uidField.getText());
+        Long orderNum = parseLongOrNull(orderNumField.getText());
+        return new TradeFilterSpec(classCode, secCode, clientCode, firmId, trdacc, uid, orderNum);
+    }
+
     private static void putIfNotBlank(ObjectNode n, String key, String value) {
         String v = value == null ? "" : value.trim();
         if (!v.isEmpty()) {
@@ -311,6 +324,14 @@ public final class QuikClientSwingApp {
         if (!v.isEmpty()) {
             n.put(key, Long.parseLong(v));
         }
+    }
+
+    private static Long parseLongOrNull(String value) {
+        String v = value == null ? "" : value.trim();
+        if (v.isEmpty()) {
+            return null;
+        }
+        return Long.parseLong(v);
     }
 
     private static void restoreProperty(String key, String value) {
@@ -333,6 +354,7 @@ public final class QuikClientSwingApp {
                 liveCountersLabel.setText("handled=" + l.onTradeHandled()
                         + ", inserted=" + l.inserted()
                         + ", dedup=" + l.skippedDup()
+                        + ", filtered=" + l.filteredOut()
                         + ", parseErr=" + l.parseErrors());
             }
         });

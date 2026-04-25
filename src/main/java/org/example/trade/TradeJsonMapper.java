@@ -21,6 +21,10 @@ public final class TradeJsonMapper {
         String secCode = text(node, "sec_code", "seccode", "SECCODE");
         String tradeNum = text(node, "trade_num", "tradenum", "TRADENUM");
         String orderNum = text(node, "order_num", "ordernum", "ORDERNUM");
+        String clientCode = text(node, "client_code", "CLIENT_CODE");
+        String firmId = text(node, "firmid", "cpfirmid", "firm_id", "FIRMID");
+        String trdAccId = text(node, "trdacc_id", "TRDACC_ID", "account", "ACCOUNT");
+        Long uid = longOrNull(node, "uid", "UID", "on_behalf_of_uid", "client_uid", "userid");
         String operation = normalizeOperation(text(node, "operation", "OPERATION", "side", "SIDE"));
         Long flags = longOrNull(node, "flags", "FLAGS");
         BigDecimal qty = decimal(node, "qty", "QTY");
@@ -37,6 +41,10 @@ public final class TradeJsonMapper {
                 secCode,
                 tradeNum,
                 orderNum,
+                clientCode,
+                firmId,
+                trdAccId,
+                uid,
                 operation,
                 flags,
                 qty,

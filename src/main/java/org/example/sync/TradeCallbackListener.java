@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.quik.QuikLineProtocol;
 import org.example.storage.H2TradeStore;
+import org.example.trade.TradeFilterSpec;
 import org.example.trade.TradeJsonMapper;
 import org.example.trade.TradeRecord;
 
@@ -28,20 +29,29 @@ public final class TradeCallbackListener implements Runnable {
     private final Socket callbackSocket;
     private final H2TradeStore store;
     private final Consumer<TradeRecord> onInsertedTrade;
+    private final TradeFilterSpec filterSpec;
     private volatile boolean running = true;
     private int onTradeHandled;
     private int inserted;
     private int skippedDup;
     private int parseErrors;
+    private int filteredOut;
 
     public TradeCallbackListener(Socket callbackSocket, H2TradeStore store) {
-        this(callbackSocket, store, null);
+        this(callbackSocket, store, null, TradeFilterSpec.empty());
     }
 
     public TradeCallbackListener(Socket callbackSocket, H2TradeStore store, Consumer<TradeRecord> onInsertedTrade) {
+        this(callbackSocket, store, onInsertedTrade, TradeFilterSpec.empty());
+    }
+
+    public TradeCallbackListener(Socket callbackSocket, H2TradeStore store,
+                                 Consumer<TradeRecord> onInsertedTrade,
+                                 TradeFilterSpec filterSpec) {
         this.callbackSocket = callbackSocket;
         this.store = store;
         this.onInsertedTrade = onInsertedTrade;
+        this.filterSpec = filterSpec == null ? TradeFilterSpec.empty() : filterSpec;
     }
 
     public void requestStop() {
@@ -80,6 +90,10 @@ public final class TradeCallbackListener implements Runnable {
                 JsonNode data = root.get("data");
                 TradeRecord tr = TradeJsonMapper.fromNode("ontrade", data).orElse(null);
                 if (tr == null) {
+                    continue;
+                }
+                if (!filterSpec.matches(tr)) {
+                    filteredOut++;
                     continue;
                 }
                 onTradeHandled++;
@@ -122,5 +136,9 @@ public final class TradeCallbackListener implements Runnable {
 
     public int parseErrors() {
         return parseErrors;
+    }
+
+    public int filteredOut() {
+        return filteredOut;
     }
 }

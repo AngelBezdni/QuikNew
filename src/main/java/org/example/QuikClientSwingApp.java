@@ -60,7 +60,7 @@ public final class QuikClientSwingApp {
     private final JButton syncButton = new JButton("Синхронизация сделок");
     private final JButton stopLiveButton = new JButton("Стоп live");
     private final JLabel liveStatusLabel = new JLabel("LIVE: OFF");
-    private final JLabel liveCountersLabel = new JLabel("handled=0, inserted=0, dedup=0");
+    private final JLabel liveCountersLabel = new JLabel("handled=0, inserted=0, dedup=0, parseErr=0");
 
     private final SummaryTableModel summaryModel = new SummaryTableModel();
     private final SecSummaryService summaryService = new SecSummaryService(summaryModel);
@@ -267,7 +267,7 @@ public final class QuikClientSwingApp {
         livePair = null;
         liveStore = null;
         liveStatusLabel.setText("LIVE: OFF");
-        liveCountersLabel.setText("handled=0, inserted=0, dedup=0");
+        liveCountersLabel.setText("handled=0, inserted=0, dedup=0, parseErr=0");
         log("Live OnTrade остановлен.");
     }
 
@@ -332,7 +332,8 @@ public final class QuikClientSwingApp {
             if (l != null) {
                 liveCountersLabel.setText("handled=" + l.onTradeHandled()
                         + ", inserted=" + l.inserted()
-                        + ", dedup=" + l.skippedDup());
+                        + ", dedup=" + l.skippedDup()
+                        + ", parseErr=" + l.parseErrors());
             }
         });
         uiStatsTimer.start();

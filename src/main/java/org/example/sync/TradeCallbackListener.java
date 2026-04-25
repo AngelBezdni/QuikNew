@@ -1,5 +1,6 @@
 package org.example.sync;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.quik.QuikLineProtocol;
@@ -7,8 +8,11 @@ import org.example.storage.H2TradeStore;
 import org.example.trade.TradeJsonMapper;
 import org.example.trade.TradeRecord;
 
+import java.io.InputStreamReader;
 import java.io.IOException;
+import java.io.Reader;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.function.Consumer;
 
@@ -28,6 +32,7 @@ public final class TradeCallbackListener implements Runnable {
     private int onTradeHandled;
     private int inserted;
     private int skippedDup;
+    private int parseErrors;
 
     public TradeCallbackListener(Socket callbackSocket, H2TradeStore store) {
         this(callbackSocket, store, null);
@@ -50,17 +55,24 @@ public final class TradeCallbackListener implements Runnable {
     @Override
     public void run() {
         try {
+            Reader callbackReader = new InputStreamReader(callbackSocket.getInputStream(), StandardCharsets.UTF_8);
             while (running) {
                 String line;
                 try {
-                    line = QuikLineProtocol.readJsonLineStreaming(callbackSocket);
+                    line = QuikLineProtocol.readJsonLineStreaming(callbackReader);
                 } catch (IOException e) {
                     if (!running) {
                         break;
                     }
                     throw new RuntimeException("Ошибка чтения callback", e);
                 }
-                JsonNode root = MAPPER.readTree(line);
+                JsonNode root;
+                try {
+                    root = MAPPER.readTree(line);
+                } catch (JsonProcessingException e) {
+                    parseErrors++;
+                    continue;
+                }
                 String cmd = text(root, "cmd");
                 if (!"OnTrade".equalsIgnoreCase(cmd)) {
                     continue;
@@ -106,5 +118,9 @@ public final class TradeCallbackListener implements Runnable {
 
     public int skippedDup() {
         return skippedDup;
+    }
+
+    public int parseErrors() {
+        return parseErrors;
     }
 }

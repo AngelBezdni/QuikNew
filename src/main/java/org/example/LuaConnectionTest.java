@@ -1,15 +1,12 @@
 package org.example;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
+import org.example.quik.ConnSettings;
+import org.example.quik.QuikLineProtocol;
+import org.example.quik.QuikSocketPair;
+
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.net.InetSocketAddress;
 import java.net.ConnectException;
-import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Отдельный тестовый класс для проверки подключения к Lua (QUIK#).
@@ -19,24 +16,17 @@ import java.nio.charset.StandardCharsets;
  */
 public final class LuaConnectionTest {
 
-    private static final String DEFAULT_HOST = "127.0.0.1";
-    private static final int DEFAULT_RESPONSE_PORT = 34130;
-    private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
-    private static final int DEFAULT_READ_TIMEOUT_MS = 20_000;
-
     public void run(String[] args) throws IOException {
-        Settings s = Settings.fromArgs(args);
-        System.out.println("Проверка Lua-соединения: " + s.host + ":" + s.responsePort + " / " + s.callbackPort);
+        ConnSettings s = ConnSettings.fromArgs(args, 20_000, 2);
+        System.out.println("Проверка Lua-соединения: " + s.host() + ":" + s.responsePort() + " / " + s.callbackPort());
 
         try {
-            try (Socket response = connect(s.host, s.responsePort, s.connectTimeoutMs, s.readTimeoutMs);
-                 Socket callback = connect(s.host, s.callbackPort, s.connectTimeoutMs, 0)) {
-
-                // В QUIK# важен порядок: сначала response, потом callback.
+            try (QuikSocketPair pair = QuikSocketPair.open(s)) {
                 System.out.println("TCP OK: response и callback подключены.");
 
                 String pingReq = "{\"cmd\":\"ping\",\"data\":\"Ping\"}";
-                String pingResp = rpc(response, pingReq);
+                QuikLineProtocol.writeJsonLine(pair.response(), pingReq);
+                String pingResp = QuikLineProtocol.readJsonLineStreaming(pair.response());
                 System.out.println("Ping response: " + pingResp);
                 System.out.println("Проверка завершена успешно.");
             }
@@ -47,28 +37,8 @@ public final class LuaConnectionTest {
         }
     }
 
-    private static Socket connect(String host, int port, int connectTimeoutMs, int readTimeoutMs) throws IOException {
-        Socket socket = new Socket();
-        socket.connect(new InetSocketAddress(host, port), connectTimeoutMs);
-        socket.setSoTimeout(readTimeoutMs);
-        return socket;
-    }
-
-    private static String rpc(Socket responseSocket, String requestJson) throws IOException {
-        BufferedWriter out = new BufferedWriter(new OutputStreamWriter(responseSocket.getOutputStream(), StandardCharsets.UTF_8));
-        BufferedReader in = new BufferedReader(new InputStreamReader(responseSocket.getInputStream(), StandardCharsets.UTF_8));
-        out.write(requestJson);
-        out.write('\n');
-        out.flush();
-        String line = in.readLine();
-        if (line == null) {
-            throw new IOException("Lua закрыл response-соединение без ответа.");
-        }
-        return line;
-    }
-
-    private static String buildConnectRefusedHint(Settings s) {
-        return "Connection refused: на " + s.host + ":" + s.responsePort + " или " + s.callbackPort
+    private static String buildConnectRefusedHint(ConnSettings s) {
+        return "Connection refused: на " + s.host() + ":" + s.responsePort() + " или " + s.callbackPort()
                 + " нет слушателя.\n"
                 + "Проверьте:\n"
                 + "1) В QUIK запущен Lua-скрипт сервера (QuikSharp/Quik_2).\n"
@@ -77,42 +47,18 @@ public final class LuaConnectionTest {
                 + "Пример запуска: 127.0.0.1 34132 34133 20000 10000";
     }
 
-    private static String buildTimeoutHint(Settings s) {
-        return "Timeout при подключении/чтении " + s.host + ":" + s.responsePort + " / " + s.callbackPort
-                + " (read timeout " + s.readTimeoutMs + " ms).\n"
+    private static String buildTimeoutHint(ConnSettings s) {
+        return "Timeout при подключении/чтении " + s.host() + ":" + s.responsePort() + " / " + s.callbackPort()
+                + " (read timeout " + s.readTimeoutMs() + " ms).\n"
                 + "Проверьте доступность портов и локальные firewall/антивирус.";
     }
 
-    private static final class Settings {
-        private final String host;
-        private final int responsePort;
-        private final int callbackPort;
-        private final int readTimeoutMs;
-        private final int connectTimeoutMs;
-
-        private Settings(String host, int responsePort, int callbackPort, int readTimeoutMs, int connectTimeoutMs) {
-            this.host = host;
-            this.responsePort = responsePort;
-            this.callbackPort = callbackPort;
-            this.readTimeoutMs = readTimeoutMs;
-            this.connectTimeoutMs = connectTimeoutMs;
-        }
-
-        private static Settings fromArgs(String[] args) {
-            if (args == null || args.length == 0) {
-                return new Settings(
-                        DEFAULT_HOST,
-                        DEFAULT_RESPONSE_PORT,
-                        DEFAULT_RESPONSE_PORT + 1,
-                        DEFAULT_READ_TIMEOUT_MS,
-                        DEFAULT_CONNECT_TIMEOUT_MS);
-            }
-            String host = args[0];
-            int response = args.length >= 2 ? Integer.parseInt(args[1]) : DEFAULT_RESPONSE_PORT;
-            int callback = args.length >= 3 ? Integer.parseInt(args[2]) : response + 1;
-            int readTimeout = args.length >= 4 ? Integer.parseInt(args[3]) : DEFAULT_READ_TIMEOUT_MS;
-            int connectTimeout = args.length >= 5 ? Integer.parseInt(args[4]) : DEFAULT_CONNECT_TIMEOUT_MS;
-            return new Settings(host, response, callback, readTimeout, connectTimeout);
+    public static void main(String[] args) {
+        try {
+            new LuaConnectionTest().run(args);
+        } catch (Exception e) {
+            System.err.println("Ошибка проверки Lua-соединения:");
+            System.err.println(e.getMessage());
         }
     }
 }

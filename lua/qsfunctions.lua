@@ -5,20 +5,33 @@ local json = require ("dkjson")
 local qsfunctions = {}
 
 function qsfunctions.dispatch_and_process(msg)
-    if qsfunctions[msg.cmd] then
+    local req_cmd = msg and msg.cmd or "<nil>"
+    log("dispatch start: cmd=" .. tostring(req_cmd), 0)
+    if qsfunctions[req_cmd] then
         -- dispatch a command simply by a table lookup
         -- in qsfunctions method names must match commands
-        local status, result = pcall(qsfunctions[msg.cmd], msg)
+        local status, result = pcall(qsfunctions[req_cmd], msg)
         if status then
+            local res_cmd = result and result.cmd or "<nil>"
+            local count = nil
+            if result and type(result.data) == "table" then
+                count = #result.data
+            end
+            if count ~= nil then
+                log("dispatch done: req=" .. tostring(req_cmd) .. ", res=" .. tostring(res_cmd) .. ", data_count=" .. tostring(count), 0)
+            else
+                log("dispatch done: req=" .. tostring(req_cmd) .. ", res=" .. tostring(res_cmd), 0)
+            end
             return result
         else
             msg.cmd = "lua_error"
             msg.lua_error = "Lua error: " .. result
+            log("dispatch error: cmd=" .. tostring(req_cmd) .. ", err=" .. tostring(result), 3)
             return msg
         end
     else
 		log(to_json(msg), 3)
-		msg.lua_error = "Command not implemented in Lua qsfunctions module: " .. msg.cmd
+		msg.lua_error = "Command not implemented in Lua qsfunctions module: " .. req_cmd
         msg.cmd = "lua_error"
         return msg
     end
@@ -744,6 +757,7 @@ end
 
 -- Функция возвращает таблицу сделок (всю или по заданному инструменту)
 function qsfunctions.get_trades(msg)
+	log("get_trades: input data=" .. tostring(msg.data), 0)
 	if msg.data ~= "" then
 		local spl = split(msg.data, "|")
 		class_code, sec_code = spl[1], spl[2]
@@ -756,6 +770,7 @@ function qsfunctions.get_trades(msg)
 			table.insert(trades, trade)
 		end
 	end
+	log("get_trades: selected rows=" .. tostring(#trades), 0)
 	msg.data = trades
 	return msg
 end
@@ -1026,8 +1041,10 @@ function qsfunctions.get_trades_filtered(msg)
 	if not f then
 		msg.cmd = "lua_error"
 		msg.lua_error = err
+		log("get_trades_filtered error: " .. tostring(err), 3)
 		return msg
 	end
+	log("get_trades_filtered: filter=" .. to_json(f), 0)
 
 	local trades = {}
 	for i = 0, getNumberOf("trades") - 1 do
@@ -1036,6 +1053,7 @@ function qsfunctions.get_trades_filtered(msg)
 			table.insert(trades, trade)
 		end
 	end
+	log("get_trades_filtered: selected rows=" .. tostring(#trades), 0)
 	msg.data = trades
 	return msg
 end

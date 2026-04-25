@@ -260,16 +260,19 @@ function receiveRequest()
     if not is_connected then
         return nil, "not conencted"
     end
-    local status, requestString= pcall(response_client.receive, response_client)
+    local status, requestString = pcall(response_client.receive, response_client)
     if status and requestString then
         local msg_table, err = from_json(requestString)
         if err then
-            log(err, 3)
+            log("RPC receive decode error: " .. tostring(err), 3)
             return nil, err
         else
+            local cmd = msg_table and msg_table.cmd or "<nil>"
+            log("RPC receive: cmd=" .. tostring(cmd) .. ", bytes=" .. tostring(#requestString), 0)
             return msg_table
         end
     else
+        log("RPC receive failed, disconnecting client", 2)
         disconnected()
         return nil, err
     end
@@ -279,11 +282,22 @@ function sendResponse(msg_table)
     -- if not set explicitly then set CreatedTime "t" property here
     -- if not msg_table.t then msg_table.t = timemsec() end
     local responseString = to_json(msg_table)
+    local cmd = msg_table and msg_table.cmd or "<nil>"
+    local data_count = nil
+    if msg_table and type(msg_table.data) == "table" then
+        data_count = #msg_table.data
+    end
     if is_connected then
         local status, res = pcall(response_client.send, response_client, responseString..'\n')
         if status and res then
+            local suffix = ""
+            if data_count ~= nil then
+                suffix = ", data_count=" .. tostring(data_count)
+            end
+            log("RPC send: cmd=" .. tostring(cmd) .. ", bytes=" .. tostring(#responseString) .. suffix, 0)
             return true
         else
+            log("RPC send failed for cmd=" .. tostring(cmd), 3)
             disconnected()
             return nil, err
         end

@@ -26,6 +26,7 @@ public final class TradeBootstrap {
     }
 
     public static BootstrapResult run(ConnSettings settings, H2TradeStore store) throws IOException, SQLException {
+        System.out.println("Bootstrap mode: " + GetTradesRpcJson.describeMode());
         String requestJson = GetTradesRpcJson.requestLine();
         System.out.println("Bootstrap RPC: " + requestJson);
         IOException last = null;

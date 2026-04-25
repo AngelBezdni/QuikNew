@@ -26,6 +26,7 @@ public final class LuaTradesRequest {
         ConnSettings s = ConnSettings.fromArgs(args, ConnSettings.DEFAULT_READ_TIMEOUT_TRADES_MS, 2);
         System.out.println("Запрос сделок к Lua: " + s.host() + ":" + s.responsePort() + " / " + s.callbackPort()
                 + " (read timeout " + s.readTimeoutMs() + " ms)");
+        System.out.println("Режим запроса: " + GetTradesRpcJson.describeMode());
 
         String requestJson = GetTradesRpcJson.requestLine();
         System.out.println("RPC: " + requestJson);

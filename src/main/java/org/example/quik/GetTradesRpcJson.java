@@ -30,6 +30,20 @@ public final class GetTradesRpcJson {
     private GetTradesRpcJson() {
     }
 
+    public static String describeMode() {
+        String filterJson = System.getProperty("quik.get_trades.filter_json");
+        String filterFile = System.getProperty("quik.get_trades.filter_file");
+        if (filterJson != null && !filterJson.isBlank()) {
+            return "mode=get_trades_filtered, source=filter_json";
+        }
+        if (filterFile != null && !filterFile.isBlank()) {
+            return "mode=get_trades_filtered, source=filter_file(" + filterFile.trim() + ")";
+        }
+        String cmd = System.getProperty("quik.get_trades.cmd", "get_trades");
+        String data = System.getProperty("quik.get_trades.data", "");
+        return "mode=" + cmd + ", data=" + (data == null ? "" : data);
+    }
+
     public static String requestLine() throws IOException {
         try {
             String filterJson = System.getProperty("quik.get_trades.filter_json");

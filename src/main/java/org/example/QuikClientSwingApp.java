@@ -60,6 +60,7 @@ public final class QuikClientSwingApp {
     private final JButton pingButton = new JButton("Ping");
     private final JButton syncButton = new JButton("Синхронизация сделок");
     private final JButton stopLiveButton = new JButton("Стоп live");
+    private final JButton clearTableButton = new JButton("Очистить таблицу");
     private final JLabel liveStatusLabel = new JLabel("LIVE: OFF");
     private final JLabel liveCountersLabel = new JLabel("handled=0, inserted=0, dedup=0, filtered=0, parseErr=0");
 
@@ -109,6 +110,7 @@ public final class QuikClientSwingApp {
         buttons.add(pingButton);
         buttons.add(syncButton);
         buttons.add(stopLiveButton);
+        buttons.add(clearTableButton);
         stopLiveButton.setEnabled(false);
         root.add(buttons);
 
@@ -166,6 +168,7 @@ public final class QuikClientSwingApp {
         }));
 
         stopLiveButton.addActionListener(e -> runAsync("stop-live", this::stopLive));
+        clearTableButton.addActionListener(e -> runAsync("clear-table", this::clearTradeTable));
     }
 
     private void runAsync(String op, ThrowingRunnable action) {
@@ -189,6 +192,7 @@ public final class QuikClientSwingApp {
                 } finally {
                     pingButton.setEnabled(true);
                     syncButton.setEnabled(true);
+                    clearTableButton.setEnabled(true);
                     stopLiveButton.setEnabled(liveThread != null && liveThread.isAlive());
                     log("Операция завершена: " + op);
                 }
@@ -271,6 +275,22 @@ public final class QuikClientSwingApp {
         liveStatusLabel.setText("LIVE: OFF");
         liveCountersLabel.setText("handled=0, inserted=0, dedup=0, filtered=0, parseErr=0");
         log("Live OnTrade остановлен.");
+    }
+
+    private void clearTradeTable() throws Exception {
+        boolean wasLive = liveThread != null && liveThread.isAlive();
+        if (wasLive) {
+            stopLive();
+        }
+        try (H2TradeStore store = H2TradeStore.fromPropertyOrDefault()) {
+            store.init();
+            int deleted = store.clearAllTrades();
+            summaryService.clearAll();
+            log("Таблица trade_fact очищена, удалено строк: " + deleted);
+        }
+        if (wasLive) {
+            log("Live был остановлен перед очисткой. Нажмите 'Синхронизация сделок' для перезапуска.");
+        }
     }
 
     private String[] buildConnArgs() {

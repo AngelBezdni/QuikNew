@@ -11,6 +11,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -161,6 +162,43 @@ public final class H2TradeStore implements AutoCloseable {
         return rows;
     }
 
+    public List<TradeForSummary> loadTradesForSummary() throws SQLException {
+        String sql = """
+                SELECT
+                    COALESCE(sec_code, '') AS sec_code,
+                    COALESCE(operation, '') AS operation,
+                    flags,
+                    qty,
+                    price,
+                    value_rub,
+                    received_at,
+                    dedup_key
+                FROM trade_fact
+                ORDER BY received_at, dedup_key
+                """;
+        List<TradeForSummary> rows = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                rows.add(new TradeForSummary(
+                        rs.getString("sec_code"),
+                        rs.getString("operation"),
+                        (Long) rs.getObject("flags"),
+                        rs.getBigDecimal("qty"),
+                        rs.getBigDecimal("price"),
+                        rs.getBigDecimal("value_rub")));
+            }
+        }
+        return rows;
+    }
+
+    public int clearAllTrades() throws SQLException {
+        String sql = "DELETE FROM trade_fact";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            return ps.executeUpdate();
+        }
+    }
+
     public static String dedupKey(TradeRecord t) {
         String cc = t.classCode() == null ? "" : t.classCode();
         String sc = t.secCode() == null ? "" : t.secCode();
@@ -182,6 +220,16 @@ public final class H2TradeStore implements AutoCloseable {
             java.math.BigDecimal sellSum,
             java.math.BigDecimal buyQty,
             java.math.BigDecimal sellQty
+    ) {
+    }
+
+    public record TradeForSummary(
+            String secCode,
+            String operation,
+            Long flags,
+            BigDecimal qty,
+            BigDecimal price,
+            BigDecimal valueRub
     ) {
     }
 

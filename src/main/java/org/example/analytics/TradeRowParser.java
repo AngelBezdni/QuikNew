@@ -1,6 +1,7 @@
 package org.example.analytics;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.example.scripts.GetTradesByUidScript;
 
 /**
  * Разбор полей сделки из JSON QUIK# (после {@code get_trades}).

@@ -1,7 +1,6 @@
 package org.example.scripts;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.example.quik.dto.QuikMessage;
 import org.example.quik.rpc.QuikRpcClient;
@@ -12,8 +11,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Фильтр сделок по UID на стороне JVM после штатного {@code get_trades}.
- * В JSON из Lua имена полей и регистр могут отличаться; часть полей приходит как double или строка.
+ * Получение сделок по UID с фильтрацией на стороне Lua (команда {@code get_trades_by_uid}).
  */
 public final class GetTradesByUidScript {
 
@@ -46,30 +44,10 @@ public final class GetTradesByUidScript {
     }
 
     public QuikMessage run(long uid) throws IOException {
-        QuikMessage raw = new GetTradesScript(rpc).runAll();
-        if (raw.getLuaError() != null || "lua_error".equals(raw.getCmd())) {
-            return raw;
-        }
-        JsonNode data = raw.getData();
-        if (data == null || !data.isArray()) {
-            QuikMessage err = new QuikMessage();
-            err.setCmd("lua_error");
-            err.setLuaError("get_trades: ожидался массив в data, получено: " + (data == null ? "null" : data.getNodeType().toString()));
-            return err;
-        }
-        ArrayNode filtered = JsonNodeFactory.instance.arrayNode();
-        for (JsonNode trade : data) {
-            if (uidMatches(trade, uid)) {
-                filtered.add(trade);
-            }
-        }
-        QuikMessage out = new QuikMessage();
-        out.setCmd("get_trades");
-        out.setData(filtered);
-        if (raw.getT() != null) {
-            out.setT(raw.getT());
-        }
-        return out;
+        QuikMessage req = new QuikMessage();
+        req.setCmd("get_trades_by_uid");
+        req.setData(JsonNodeFactory.instance.textNode(Long.toString(uid)));
+        return rpc.invoke(req);
     }
 
     public QuikMessage runDefault() throws IOException {

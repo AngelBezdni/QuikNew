@@ -50,8 +50,8 @@ public final class QuikClientSwingApp {
 
     private final JTextField classCodeField = new JTextField("", 10);
     private final JTextField secCodeField = new JTextField("", 10);
-    private final JTextField clientCodeField = new JTextField("", 12);
-    private final JTextField uidField = new JTextField("", 12);
+    private final JTextField clientCodeField = new JTextField("TIL000000001", 12);
+    private final JTextField uidField = new JTextField("115", 12);
     private final JTextField firmIdField = new JTextField("", 12);
     private final JTextField orderNumField = new JTextField("", 12);
     private final JTextField trdAccField = new JTextField("", 12);

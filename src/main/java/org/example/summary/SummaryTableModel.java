@@ -19,8 +19,8 @@ public final class SummaryTableModel extends AbstractTableModel {
     private final List<Row> rows = new ArrayList<>();
     private final Map<String, Integer> idx = new LinkedHashMap<>();
     private final String[] columns = {
-            "SEC_CODE", "SUM_BUY", "SUM_SELL", "QTY_BUY", "QTY_SELL", "QTY_DELTA",
-            "PNL_FIFO", "OPEN_QTY", "OPEN_COST"
+            "Код бумаги", "Сумма покупок", "Сумма продаж", "Кол-во покупок", "Кол-во продаж", "Дельта кол-ва",
+            "Результат FIFO", "Открытое кол-во", "Себестоимость остатка", "Средняя цена покупки", "Средняя цена продажи"
     };
 
     @Override
@@ -51,6 +51,8 @@ public final class SummaryTableModel extends AbstractTableModel {
             case 6 -> format2(r.realizedPnl);
             case 7 -> format2(r.openQty);
             case 8 -> format2(r.openCost);
+            case 9 -> format2(avgPrice(r.buy, r.buyQty));
+            case 10 -> format2(avgPrice(r.sell, r.sellQty));
             default -> "";
         };
     }
@@ -166,5 +168,13 @@ public final class SummaryTableModel extends AbstractTableModel {
             return "0";
         }
         return DF.get().format(n);
+    }
+
+    private static BigDecimal avgPrice(BigDecimal amount, BigDecimal qty) {
+        BigDecimal q = nz(qty);
+        if (q.compareTo(BigDecimal.ZERO) == 0) {
+            return BigDecimal.ZERO;
+        }
+        return nz(amount).divide(q, 10, java.math.RoundingMode.HALF_UP);
     }
 }

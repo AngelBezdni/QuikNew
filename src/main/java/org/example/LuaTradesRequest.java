@@ -5,6 +5,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.Reader;
 import java.net.InetSocketAddress;
 import java.net.ConnectException;
 import java.net.Socket;
@@ -26,6 +27,7 @@ public final class LuaTradesRequest {
     private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
     private static final int DEFAULT_READ_TIMEOUT_MS = 60_000;
     private static final int DEFAULT_ATTEMPTS = 2;
+    private static final int MAX_RESPONSE_CHARS = 20_000_000;
 
     /**
      * Получить все сделки из таблицы "Сделки" (команда Lua: get_trades, data = "").
@@ -68,12 +70,38 @@ public final class LuaTradesRequest {
         out.write(requestJson);
         out.write('\n');
         out.flush();
+        return readJsonLineStreaming(in);
+    }
 
-        String line = in.readLine();
-        if (line == null) {
-            throw new IOException("Lua закрыл response-соединение без ответа.");
+    /**
+     * Потоковое чтение одной JSON-строки до символа '\n'.
+     * Нужен для больших ответов (тысячи сделок), где readLine может вести себя нестабильно при таймаутах.
+     */
+    private static String readJsonLineStreaming(Reader in) throws IOException {
+        StringBuilder sb = new StringBuilder(64 * 1024);
+        char[] buf = new char[4096];
+        while (true) {
+            int n = in.read(buf);
+            if (n == -1) {
+                if (sb.isEmpty()) {
+                    throw new IOException("Lua закрыл response-соединение без ответа.");
+                }
+                break;
+            }
+            for (int i = 0; i < n; i++) {
+                char c = buf[i];
+                if (c == '\n') {
+                    return sb.toString();
+                }
+                if (c != '\r') {
+                    sb.append(c);
+                }
+                if (sb.length() > MAX_RESPONSE_CHARS) {
+                    throw new IOException("Ответ Lua слишком большой (>" + MAX_RESPONSE_CHARS + " символов).");
+                }
+            }
         }
-        return line;
+        return sb.toString();
     }
 
     private static void sleepQuiet(long ms) {

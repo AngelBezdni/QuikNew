@@ -22,15 +22,24 @@ public final class TradeRowParser {
     }
 
     public static long qtyLots(JsonNode trade) {
-        Long q = GetTradesByUidScript.nodeAsLong(GetTradesByUidScript.getPropIgnoreCase(trade, "qty"));
-        if (q != null) {
-            return Math.abs(q);
-        }
-        q = GetTradesByUidScript.nodeAsLong(GetTradesByUidScript.getPropIgnoreCase(trade, "quantity"));
+        Long q = signedQty(trade);
         if (q != null) {
             return Math.abs(q);
         }
         return 0L;
+    }
+
+    /** Сырой signed qty, если поле в источнике может быть со знаком. */
+    public static Long signedQty(JsonNode trade) {
+        Long q = GetTradesByUidScript.nodeAsLong(GetTradesByUidScript.getPropIgnoreCase(trade, "qty"));
+        if (q != null) {
+            return q;
+        }
+        q = GetTradesByUidScript.nodeAsLong(GetTradesByUidScript.getPropIgnoreCase(trade, "quantity"));
+        if (q != null) {
+            return q;
+        }
+        return null;
     }
 
     public static long flags(JsonNode trade) {
@@ -39,11 +48,35 @@ public final class TradeRowParser {
         return v != null ? v : 0L;
     }
 
-    /**
-     * true = продажа, false = покупка (если flags нет — считаем покупку).
-     */
+    /** true = SELL, false = BUY. */
     public static boolean isSell(JsonNode trade) {
+        Boolean explicit = sideFromTextFields(trade);
+        if (explicit != null) {
+            return explicit;
+        }
+        Long signedQty = signedQty(trade);
+        if (signedQty != null && signedQty < 0) {
+            return true;
+        }
         return (flags(trade) & SELL_BIT) != 0;
+    }
+
+    private static Boolean sideFromTextFields(JsonNode trade) {
+        JsonNode raw = getAny(trade, "operation", "side", "buy_sell", "buysell", "type");
+        if (raw == null || raw.isNull()) {
+            return null;
+        }
+        String s = raw.asText("").trim().toUpperCase();
+        if (s.isEmpty()) {
+            return null;
+        }
+        if ("S".equals(s) || "SELL".equals(s) || "ПРОДАЖА".equals(s)) {
+            return true;
+        }
+        if ("B".equals(s) || "BUY".equals(s) || "ПОКУПКА".equals(s)) {
+            return false;
+        }
+        return null;
     }
 
     /** Цена сделки за единицу (поле price в QUIK). */

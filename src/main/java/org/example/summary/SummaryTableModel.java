@@ -20,7 +20,8 @@ public final class SummaryTableModel extends AbstractTableModel {
     private final Map<String, Integer> idx = new LinkedHashMap<>();
     private final String[] columns = {
             "Код бумаги", "Сумма покупок", "Сумма продаж", "Кол-во покупок", "Кол-во продаж", "Дельта кол-ва",
-            "Результат FIFO", "Открытое кол-во", "Себестоимость остатка", "Средняя цена покупки", "Средняя цена продажи"
+            "Результат FIFO", "Открытое кол-во", "Себестоимость остатка",
+            "Средняя цена покупки", "Средняя цена продажи", "Средняя цена остатка (FIFO)"
     };
 
     @Override
@@ -53,6 +54,7 @@ public final class SummaryTableModel extends AbstractTableModel {
             case 8 -> format2(r.openCost);
             case 9 -> format2(avgPrice(r.buy, r.buyQty));
             case 10 -> format2(avgPrice(r.sell, r.sellQty));
+            case 11 -> format2(avgPrice(r.openCost, r.openQty));
             default -> "";
         };
     }

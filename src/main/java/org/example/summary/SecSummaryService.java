@@ -135,7 +135,8 @@ public final class SecSummaryService {
     }
 
     private static final class FifoState {
-        private final Deque<Lot> lots = new ArrayDeque<>();
+        private final Deque<Lot> longLots = new ArrayDeque<>();
+        private final Deque<Lot> shortLots = new ArrayDeque<>();
         private BigDecimal sumBuy = BigDecimal.ZERO;
         private BigDecimal sumSell = BigDecimal.ZERO;
         private BigDecimal qtyBuy = BigDecimal.ZERO;
@@ -149,30 +150,55 @@ public final class SecSummaryService {
             if (q.compareTo(BigDecimal.ZERO) <= 0) {
                 return;
             }
+            BigDecimal px = nz(unitPrice);
             if ("B".equals(side)) {
                 sumBuy = sumBuy.add(nz(amount));
                 qtyBuy = qtyBuy.add(q);
-                lots.addLast(new Lot(q, nz(unitPrice)));
-                openQty = openQty.add(q);
-                openCost = openCost.add(q.multiply(nz(unitPrice)));
+                // Сначала закрываем шорт-лоты (FIFO)
+                BigDecimal remaining = q;
+                while (remaining.compareTo(BigDecimal.ZERO) > 0 && !shortLots.isEmpty()) {
+                    Lot lot = shortLots.peekFirst();
+                    BigDecimal matched = lot.qty.min(remaining);
+                    // Для short PnL = цена продажи шорта - цена откупа
+                    realizedPnl = realizedPnl.add(matched.multiply(lot.price.subtract(px)));
+                    lot.qty = lot.qty.subtract(matched);
+                    remaining = remaining.subtract(matched);
+                    openQty = openQty.add(matched);
+                    openCost = openCost.add(matched.multiply(lot.price));
+                    if (lot.qty.compareTo(BigDecimal.ZERO) == 0) {
+                        shortLots.removeFirst();
+                    }
+                }
+                // Остаток открывает long
+                if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+                    longLots.addLast(new Lot(remaining, px));
+                    openQty = openQty.add(remaining);
+                    openCost = openCost.add(remaining.multiply(px));
+                }
                 return;
             }
             if ("S".equals(side)) {
                 sumSell = sumSell.add(nz(amount));
                 qtySell = qtySell.add(q);
                 BigDecimal remaining = q;
-                BigDecimal sellPrice = nz(unitPrice);
-                while (remaining.compareTo(BigDecimal.ZERO) > 0 && !lots.isEmpty()) {
-                    Lot lot = lots.peekFirst();
+                // Сначала закрываем long-лоты (FIFO)
+                while (remaining.compareTo(BigDecimal.ZERO) > 0 && !longLots.isEmpty()) {
+                    Lot lot = longLots.peekFirst();
                     BigDecimal matched = lot.qty.min(remaining);
-                    realizedPnl = realizedPnl.add(matched.multiply(sellPrice.subtract(lot.price)));
+                    realizedPnl = realizedPnl.add(matched.multiply(px.subtract(lot.price)));
                     lot.qty = lot.qty.subtract(matched);
                     remaining = remaining.subtract(matched);
                     openQty = openQty.subtract(matched);
                     openCost = openCost.subtract(matched.multiply(lot.price));
                     if (lot.qty.compareTo(BigDecimal.ZERO) == 0) {
-                        lots.removeFirst();
+                        longLots.removeFirst();
                     }
+                }
+                // Остаток открывает short
+                if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+                    shortLots.addLast(new Lot(remaining, px));
+                    openQty = openQty.subtract(remaining);
+                    openCost = openCost.subtract(remaining.multiply(px));
                 }
             }
         }

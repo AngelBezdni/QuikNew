@@ -21,6 +21,7 @@ public final class TradeJsonMapper {
         String secCode = text(node, "sec_code", "seccode", "SECCODE");
         String tradeNum = text(node, "trade_num", "tradenum", "TRADENUM");
         String orderNum = text(node, "order_num", "ordernum", "ORDERNUM");
+        String operation = normalizeOperation(text(node, "operation", "OPERATION", "side", "SIDE"));
         Long flags = longOrNull(node, "flags", "FLAGS");
         BigDecimal qty = decimal(node, "qty", "QTY");
         BigDecimal price = decimal(node, "price", "PRICE");
@@ -36,6 +37,7 @@ public final class TradeJsonMapper {
                 secCode,
                 tradeNum,
                 orderNum,
+                operation,
                 flags,
                 qty,
                 price,
@@ -76,5 +78,19 @@ public final class TradeJsonMapper {
             }
         }
         return null;
+    }
+
+    private static String normalizeOperation(String op) {
+        if (op == null || op.isBlank()) {
+            return "";
+        }
+        String v = op.trim().toUpperCase();
+        if (v.startsWith("B")) {
+            return "B";
+        }
+        if (v.startsWith("S")) {
+            return "S";
+        }
+        return v;
     }
 }

@@ -11,6 +11,7 @@ public record TradeRecord(
         String secCode,
         String tradeNum,
         String orderNum,
+        String operation,
         Long flags,
         BigDecimal qty,
         BigDecimal price,

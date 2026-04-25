@@ -10,6 +10,7 @@ import org.example.trade.TradeRecord;
 import java.io.IOException;
 import java.net.Socket;
 import java.sql.SQLException;
+import java.util.function.Consumer;
 
 /**
  * Читает callback-сокет построчно; при {@code OnTrade} пишет сделку в H2.
@@ -22,14 +23,20 @@ public final class TradeCallbackListener implements Runnable {
 
     private final Socket callbackSocket;
     private final H2TradeStore store;
+    private final Consumer<TradeRecord> onInsertedTrade;
     private volatile boolean running = true;
     private int onTradeHandled;
     private int inserted;
     private int skippedDup;
 
     public TradeCallbackListener(Socket callbackSocket, H2TradeStore store) {
+        this(callbackSocket, store, null);
+    }
+
+    public TradeCallbackListener(Socket callbackSocket, H2TradeStore store, Consumer<TradeRecord> onInsertedTrade) {
         this.callbackSocket = callbackSocket;
         this.store = store;
+        this.onInsertedTrade = onInsertedTrade;
     }
 
     public void requestStop() {
@@ -67,6 +74,9 @@ public final class TradeCallbackListener implements Runnable {
                 try {
                     if (store.insertIfAbsent(tr)) {
                         inserted++;
+                        if (onInsertedTrade != null) {
+                            onInsertedTrade.accept(tr);
+                        }
                     } else {
                         skippedDup++;
                     }

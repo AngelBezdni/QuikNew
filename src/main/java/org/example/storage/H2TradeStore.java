@@ -9,7 +9,10 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -56,6 +59,7 @@ public final class H2TradeStore implements AutoCloseable {
                         sec_code VARCHAR(128),
                         trade_num VARCHAR(128) NOT NULL,
                         order_num VARCHAR(128),
+                        operation VARCHAR(16),
                         flags BIGINT,
                         qty DECIMAL(30, 10),
                         price DECIMAL(30, 10),
@@ -64,6 +68,7 @@ public final class H2TradeStore implements AutoCloseable {
                         received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
                     )
                     """);
+            st.execute("ALTER TABLE trade_fact ADD COLUMN IF NOT EXISTS operation VARCHAR(16)");
         }
     }
 
@@ -74,8 +79,8 @@ public final class H2TradeStore implements AutoCloseable {
         Objects.requireNonNull(t, "trade");
         String key = dedupKey(t);
         String sql = """
-                INSERT INTO trade_fact (dedup_key, source, class_code, sec_code, trade_num, order_num, flags, qty, price, value_rub, raw_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO trade_fact (dedup_key, source, class_code, sec_code, trade_num, order_num, operation, flags, qty, price, value_rub, raw_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, key);
@@ -84,20 +89,58 @@ public final class H2TradeStore implements AutoCloseable {
             ps.setString(4, emptyToNull(t.secCode()));
             ps.setString(5, t.tradeNum());
             ps.setString(6, emptyToNull(t.orderNum()));
+            ps.setString(7, emptyToNull(t.operation()));
             if (t.flags() != null) {
-                ps.setLong(7, t.flags());
+                ps.setLong(8, t.flags());
             } else {
-                ps.setObject(7, null);
+                ps.setObject(8, null);
             }
-            ps.setObject(8, t.qty());
-            ps.setObject(9, t.price());
-            ps.setObject(10, t.valueRub());
-            ps.setString(11, t.rawJson());
+            ps.setObject(9, t.qty());
+            ps.setObject(10, t.price());
+            ps.setObject(11, t.valueRub());
+            ps.setString(12, t.rawJson());
             ps.executeUpdate();
             return true;
         } catch (JdbcSQLIntegrityConstraintViolationException e) {
             return false;
         }
+    }
+
+    public List<SecSummaryRow> loadSecSummaryRows() throws SQLException {
+        String sql = """
+                SELECT
+                    COALESCE(sec_code, '') AS sec_code,
+                    SUM(CASE
+                        WHEN UPPER(COALESCE(operation, '')) = 'B' THEN COALESCE(value_rub, COALESCE(qty, 0) * COALESCE(price, 0))
+                        WHEN operation IS NULL OR operation = '' THEN
+                            CASE WHEN BITAND(COALESCE(flags, 0), 4) = 0
+                                THEN COALESCE(value_rub, COALESCE(qty, 0) * COALESCE(price, 0))
+                                ELSE 0 END
+                        ELSE 0
+                    END) AS buy_sum,
+                    SUM(CASE
+                        WHEN UPPER(COALESCE(operation, '')) = 'S' THEN COALESCE(value_rub, COALESCE(qty, 0) * COALESCE(price, 0))
+                        WHEN operation IS NULL OR operation = '' THEN
+                            CASE WHEN BITAND(COALESCE(flags, 0), 4) <> 0
+                                THEN COALESCE(value_rub, COALESCE(qty, 0) * COALESCE(price, 0))
+                                ELSE 0 END
+                        ELSE 0
+                    END) AS sell_sum
+                FROM trade_fact
+                GROUP BY COALESCE(sec_code, '')
+                ORDER BY COALESCE(sec_code, '')
+                """;
+        List<SecSummaryRow> rows = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                rows.add(new SecSummaryRow(
+                        rs.getString("sec_code"),
+                        rs.getBigDecimal("buy_sum"),
+                        rs.getBigDecimal("sell_sum")));
+            }
+        }
+        return rows;
     }
 
     public static String dedupKey(TradeRecord t) {
@@ -113,6 +156,9 @@ public final class H2TradeStore implements AutoCloseable {
             key = key.substring(0, 380);
         }
         return key;
+    }
+
+    public record SecSummaryRow(String secCode, java.math.BigDecimal buySum, java.math.BigDecimal sellSum) {
     }
 
     private static String emptyToNull(String s) {

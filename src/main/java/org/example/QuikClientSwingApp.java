@@ -2,7 +2,14 @@ package org.example;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.example.quik.ConnSettings;
+import org.example.quik.QuikSocketPair;
+import org.example.storage.H2TradeStore;
+import org.example.summary.SecSummaryService;
+import org.example.summary.SummaryTableModel;
 import org.example.sync.TradeBootstrap;
+import org.example.sync.TradeCallbackListener;
+import org.example.trade.TradeRecord;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
@@ -12,12 +19,14 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -48,6 +57,16 @@ public final class QuikClientSwingApp {
     private final JTextArea logArea = new JTextArea();
     private final JButton pingButton = new JButton("Ping");
     private final JButton syncButton = new JButton("Синхронизация сделок");
+    private final JButton stopLiveButton = new JButton("Стоп live");
+
+    private final SummaryTableModel summaryModel = new SummaryTableModel();
+    private final SecSummaryService summaryService = new SecSummaryService(summaryModel);
+    private final JTable summaryTable = new JTable(summaryModel);
+
+    private H2TradeStore liveStore;
+    private QuikSocketPair livePair;
+    private TradeCallbackListener liveListener;
+    private Thread liveThread;
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new QuikClientSwingApp().show());
@@ -84,14 +103,22 @@ public final class QuikClientSwingApp {
         JPanel buttons = new JPanel();
         buttons.add(pingButton);
         buttons.add(syncButton);
+        buttons.add(stopLiveButton);
+        stopLiveButton.setEnabled(false);
         root.add(buttons);
 
         logArea.setEditable(false);
         JScrollPane scroll = new JScrollPane(logArea);
         scroll.setPreferredSize(new Dimension(860, 260));
+        JScrollPane summaryScroll = new JScrollPane(summaryTable);
+        summaryScroll.setPreferredSize(new Dimension(860, 220));
+        summaryTable.setFillsViewportHeight(true);
 
         frame.add(root, BorderLayout.NORTH);
-        frame.add(scroll, BorderLayout.CENTER);
+        JPanel center = new JPanel(new BorderLayout(6, 6));
+        center.add(summaryScroll, BorderLayout.CENTER);
+        center.add(scroll, BorderLayout.SOUTH);
+        frame.add(center, BorderLayout.CENTER);
         bindActions();
 
         frame.pack();
@@ -125,27 +152,10 @@ public final class QuikClientSwingApp {
         }));
 
         syncButton.addActionListener(e -> runAsync("sync", () -> {
-            String[] connArgs = buildConnArgs();
-            String prevFilterJson = System.getProperty("quik.get_trades.filter_json");
-            String prevFilterFile = System.getProperty("quik.get_trades.filter_file");
-            try {
-                String filterJson = buildFilterJsonOrNull();
-                if (filterJson != null) {
-                    System.setProperty("quik.get_trades.filter_json", filterJson);
-                    System.clearProperty("quik.get_trades.filter_file");
-                    log("Фильтр: " + filterJson);
-                } else {
-                    System.clearProperty("quik.get_trades.filter_json");
-                    System.clearProperty("quik.get_trades.filter_file");
-                    log("Фильтр не задан: будет mode=get_trades (все сделки).");
-                }
-                TradeBootstrap.BootstrapResult r = TradeSyncApp.runBootstrapOnly(connArgs);
-                log("Синхронизация завершена: всего=" + r.totalRows() + ", вставлено=" + r.inserted() + ", дубликатов=" + r.skippedDuplicates());
-            } finally {
-                restoreProperty("quik.get_trades.filter_json", prevFilterJson);
-                restoreProperty("quik.get_trades.filter_file", prevFilterFile);
-            }
+            runSyncAndStartLive();
         }));
+
+        stopLiveButton.addActionListener(e -> runAsync("stop-live", this::stopLive));
     }
 
     private void runAsync(String op, ThrowingRunnable action) {
@@ -164,14 +174,87 @@ public final class QuikClientSwingApp {
                 try {
                     get();
                 } catch (Exception ex) {
-                    log("Ошибка: " + ex.getCause().getMessage());
+                    Throwable c = ex.getCause() != null ? ex.getCause() : ex;
+                    log("Ошибка: " + c.getMessage());
                 } finally {
                     pingButton.setEnabled(true);
                     syncButton.setEnabled(true);
+                    stopLiveButton.setEnabled(liveThread != null && liveThread.isAlive());
                     log("Операция завершена: " + op);
                 }
             }
         }.execute();
+    }
+
+    private void runSyncAndStartLive() throws Exception {
+        stopLive();
+        String[] connArgs = buildConnArgs();
+        String prevFilterJson = System.getProperty("quik.get_trades.filter_json");
+        String prevFilterFile = System.getProperty("quik.get_trades.filter_file");
+        try {
+            String filterJson = buildFilterJsonOrNull();
+            if (filterJson != null) {
+                System.setProperty("quik.get_trades.filter_json", filterJson);
+                System.clearProperty("quik.get_trades.filter_file");
+                log("Фильтр: " + filterJson);
+            } else {
+                System.clearProperty("quik.get_trades.filter_json");
+                System.clearProperty("quik.get_trades.filter_file");
+                log("Фильтр не задан: будет mode=get_trades (все сделки).");
+            }
+            TradeBootstrap.BootstrapResult r = TradeSyncApp.runBootstrapOnly(connArgs);
+            log("Синхронизация завершена: всего=" + r.totalRows() + ", вставлено=" + r.inserted() + ", дубликатов=" + r.skippedDuplicates());
+        } finally {
+            restoreProperty("quik.get_trades.filter_json", prevFilterJson);
+            restoreProperty("quik.get_trades.filter_file", prevFilterFile);
+        }
+
+        ConnSettings s = ConnSettings.fromArgs(connArgs, ConnSettings.DEFAULT_READ_TIMEOUT_TRADES_MS, 2);
+        liveStore = H2TradeStore.fromPropertyOrDefault();
+        liveStore.init();
+        summaryService.loadInitial(liveStore);
+
+        livePair = QuikSocketPair.open(s);
+        liveListener = new TradeCallbackListener(livePair.callback(), liveStore, this::onInsertedTrade);
+        liveThread = new Thread(liveListener, "quik-ontrade-ui");
+        liveThread.setDaemon(true);
+        liveThread.start();
+        log("Live OnTrade запущен.");
+    }
+
+    private void onInsertedTrade(TradeRecord t) {
+        summaryService.onInsertedTrade(t);
+        log("OnTrade inserted: sec=" + safe(t.secCode()) + ", num=" + safe(t.tradeNum()));
+    }
+
+    private void stopLive() throws Exception {
+        if (liveListener != null) {
+            liveListener.requestStop();
+        }
+        if (liveThread != null) {
+            try {
+                liveThread.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (livePair != null) {
+            try {
+                livePair.close();
+            } catch (Exception ignored) {
+            }
+        }
+        if (liveStore != null) {
+            try {
+                liveStore.close();
+            } catch (SQLException ignored) {
+            }
+        }
+        liveListener = null;
+        liveThread = null;
+        livePair = null;
+        liveStore = null;
+        log("Live OnTrade остановлен.");
     }
 
     private String[] buildConnArgs() {
@@ -222,6 +305,10 @@ public final class QuikClientSwingApp {
         } else {
             System.setProperty(key, value);
         }
+    }
+
+    private static String safe(String s) {
+        return s == null ? "" : s;
     }
 
     private void log(String text) {
